@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="BaseTheme.SmartRecorder" parent="android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">#FFFFFF</item>
+        <!-- Android 8.0 不支持深色导航图标，因此使用深色底保证可读。 -->
+        <item name="android:navigationBarColor">#17191C</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">#17191C</item>
+        <item name="android:windowBackground">#FFFFFF</item>
+    </style>
+    <style name="Theme.SmartRecorder" parent="BaseTheme.SmartRecorder" />
+</resources>

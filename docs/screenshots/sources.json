@@ -1,0 +1,24 @@
+{
+  "captured": "2026-09-12",
+  "environment": "Isolated fixture; no upstream camera or event images",
+  "pages": [
+    "live",
+    "recordings",
+    "settings"
+  ],
+  "capture": "ADB native screencap",
+  "images": [
+    {
+      "file": "live.png",
+      "sha256": "58766a9e9212f8ea7993aac62d3929037cc2e23d0b8f00f0a4a6d3f46bf0fa6e"
+    },
+    {
+      "file": "recordings.png",
+      "sha256": "d87176d20295b7298a96d573021223d3dabd56fbd553c141de6b9369990260ca"
+    },
+    {
+      "file": "settings.png",
+      "sha256": "1bede3c0a94e25857f4985f021e73fd472bc6f68d857b1ea929c23ddcbeaf70c"
+    }
+  ]
+}
