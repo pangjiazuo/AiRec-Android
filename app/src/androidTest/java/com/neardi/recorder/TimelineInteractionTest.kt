@@ -56,7 +56,7 @@ class TimelineInteractionTest {
         }
         choose(fraction)
         fun assertExactTime() {
-            compose.onNodeWithTag("timeline-selected-time").assertTextEquals("选中时刻  00:00:08 +08:00")
+            compose.onNodeWithTag("timeline-selected-time").assertTextEquals("00:00:08")
             val actual = compose.onNodeWithTag("channel-day-timeline").fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo].current
             assertEquals(fraction, actual, 0f)
             compose.runOnIdle { assertEquals(target, selected.longValue) }

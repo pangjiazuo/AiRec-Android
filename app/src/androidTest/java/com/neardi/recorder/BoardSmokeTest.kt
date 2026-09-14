@@ -39,7 +39,7 @@ class BoardSmokeTest {
     private lateinit var scenario: ActivityScenario<MainActivity>
     private var originalAppearance: String? = null
     private val context get() = InstrumentationRegistry.getInstrumentation().targetContext
-    private val board get() = InstrumentationRegistry.getArguments().getString("boardUrl") ?: "http://192.168.10.172:8080"
+    private val board get() = InstrumentationRegistry.getArguments().getString("boardUrl") ?: "http://192.168.10.209:8080"
     @Before fun start() {
         File(context.getExternalFilesDir(null), "verification").listFiles()?.filter { it.isFile && it.extension == "png" }
             ?.forEach { check(it.delete()) }
@@ -56,6 +56,30 @@ class BoardSmokeTest {
         val appearance = context.getSharedPreferences("recorder_appearance", Context.MODE_PRIVATE).edit()
         if (originalAppearance == null) appearance.remove("mode") else appearance.putString("mode", originalAppearance)
         appearance.commit()
+    }
+
+    @Test fun diagnoseTimelineTransport() {
+        val day = RecordingTimeline.day(LocalDate.now(), ZoneId.systemDefault())
+        val url = okhttp3.HttpUrl.Companion.run { board.toHttpUrl() }.newBuilder().addPathSegments("api/timeline")
+            .addQueryParameter("channel_id", "1").addQueryParameter("start", Instant.ofEpochMilli(day.startMs).toString())
+            .addQueryParameter("end", Instant.ofEpochMilli(day.endMs).toString()).build().toString()
+        val rows = mutableListOf<String>(url)
+        repeat(3) {
+            var received = 0L
+            var expected = -1L
+            try {
+                RecorderApi.defaultClient().newCall(okhttp3.Request.Builder().url(url).build()).execute().use { response ->
+                    expected = response.body!!.contentLength()
+                    response.body!!.byteStream().use { input ->
+                        val buf = ByteArray(8192)
+                        while (true) { val n=input.read(buf); if(n<0)break; received += n }
+                    }
+                }
+                rows.add("OK $received/$expected")
+            } catch (e: Exception) { rows.add("FAIL $received/$expected ${e.message}") }
+        }
+        File(context.getExternalFilesDir(null), "verification/transport.txt").writeText(rows.joinToString("\n"))
+        org.junit.Assert.assertTrue(rows.toString(), rows.drop(1).all { it.startsWith("OK") })
     }
 
     private fun capture(name: String) {
@@ -85,8 +109,13 @@ class BoardSmokeTest {
         compose.waitUntilAtLeastOneExists(hasTestTag("camera-1"), 20_000)
         capture("timeline-live.png")
         compose.onNodeWithTag("camera-1").performClick()
-        compose.waitUntil(20_000) {
-            compose.onNodeWithTag("channel-day-timeline").fetchSemanticsNode().config[SemanticsProperties.StateDescription] == "已加载"
+        try {
+            compose.waitUntil(20_000) {
+                compose.onNodeWithTag("channel-day-timeline").fetchSemanticsNode().config[SemanticsProperties.StateDescription] == "已加载"
+            }
+        } catch (failure: Exception) {
+            File(context.getExternalFilesDir(null), "verification/timeline-failure.txt").writeText(compose.onRoot(useUnmergedTree = true).printToString())
+            throw failure
         }
         compose.onNodeWithTag("nav-live").assertDoesNotExist()
         compose.onNodeWithText("下载录像").assertDoesNotExist()
@@ -120,12 +149,9 @@ class BoardSmokeTest {
         compose.onNodeWithTag("channel-archive-player").assertDoesNotExist()
         compose.onNodeWithTag("channel-detail-back").performClick()
         compose.onNodeWithTag("nav-recordings").performClick()
-        compose.waitUntilAtLeastOneExists(hasText("播放录像"), 20_000)
+        compose.waitUntilAtLeastOneExists(hasClickAction() and hasText(" 秒", substring = true) and isEnabled(), 20_000)
         compose.onNodeWithText("录像时间轴").assertDoesNotExist()
         capture("timeline-global-recordings.png")
-        compose.onNodeWithTag("nav-events").performClick()
-        compose.waitUntilAtLeastOneExists(hasContentDescription("事件截图"), 20_000)
-        capture("timeline-global-events.png")
         compose.onNodeWithTag("nav-settings").performClick()
         capture("timeline-settings.png")
         File(context.getExternalFilesDir(null), "verification/timeline-board.txt").writeText(
@@ -141,9 +167,9 @@ class BoardSmokeTest {
         compose.waitUntilAtLeastOneExists(hasTestTag("channel-day-timeline"), 20_000)
         compose.waitForIdle()
         capture("phone-channel-detail.png")
-        compose.onNodeWithText("退出全屏").assertDoesNotExist()
+        compose.onNodeWithContentDescription("退出全屏").assertDoesNotExist()
         compose.onNodeWithTag("channel-fullscreen").performClick()
-        compose.onNodeWithText("退出全屏").assertExists()
+        compose.onNodeWithContentDescription("退出全屏").assertExists()
         compose.waitUntilAtLeastOneExists(hasContentDescription("AHD1实时画面"), 15_000)
         capture("phone-fullscreen.png")
         compose.onNodeWithText("退出全屏").performClick()
@@ -152,9 +178,9 @@ class BoardSmokeTest {
         compose.onNodeWithTag("channel-day-timeline").assertIsDisplayed()
         compose.onNodeWithTag("channel-detail-back").performClick()
         compose.onNodeWithTag("nav-recordings").performClick()
-        compose.waitUntilAtLeastOneExists(hasText("播放录像"), 20_000)
+        compose.waitUntilAtLeastOneExists(hasClickAction() and hasText(" 秒", substring = true) and isEnabled(), 20_000)
         capture("phone-recordings.png")
-        compose.onAllNodesWithText("播放录像").onFirst().performClick()
+        compose.onAllNodes(hasClickAction() and hasText(" 秒", substring = true) and isEnabled()).onFirst().performClick()
         compose.waitUntil(30_000) {
             var ready = false
             scenario.onActivity { activity ->
@@ -175,7 +201,7 @@ class BoardSmokeTest {
         compose.onNodeWithTag("playback-seek-back").assertIsEnabled().performClick()
         awaitPlayback("back", pausedPosition) { it.first <= pausedPosition + 1_000 && it.third == Player.STATE_READY }
         compose.onNodeWithTag("playback-fullscreen").performClick()
-        compose.onNodeWithText("退出全屏").assertIsDisplayed()
+        compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
         assertFalse("进入全屏不能恢复用户暂停的录像", currentPlayback().second)
         capture("phone-playback-fullscreen.png")
         compose.onNodeWithText("退出全屏").performClick()
@@ -195,8 +221,6 @@ class BoardSmokeTest {
         compose.onNodeWithTag("nav-live").performClick()
         compose.onNodeWithTag("camera-1").performClick()
         compose.onNodeWithTag("channel-detail").assertIsDisplayed()
-        compose.onNodeWithTag("channel-tab-events").performClick()
-        compose.waitUntilAtLeastOneExists(hasContentDescription("事件截图"), 30_000)
         // 图片解码成功后再抓图；直接验证共享下载器可解包真实日志ZIP。
         val archive = ByteArrayOutputStream()
         runBlocking { MediaNetwork.download(RecorderApi(board).mediaUrl("/api/logs/download"), archive) }
@@ -205,14 +229,17 @@ class BoardSmokeTest {
             while (zip.nextEntry != null) { zip.copyTo(ByteArrayOutputStream()); entries++ }
         }
         assertTrue("真实日志ZIP应包含状态与日志文件", entries >= 3)
-        capture("phone-events.png")
         // 进入当前通道设置并只读截图；不向开发板提交配置。
         compose.onNodeWithTag("channel-settings-entry").performClick()
-        compose.waitUntilAtLeastOneExists(hasTestTag("setting-通道名称"), 15_000)
+        compose.waitUntilAtLeastOneExists(hasTestTag("option-basic"), 15_000)
+        compose.onNodeWithTag("option-basic").performClick()
         capture("phone-channel-settings.png")
+        compose.onNodeWithTag("channel-settings-back").performScrollTo().performClick()
+        compose.onNodeWithTag("option-detection").performClick()
+        compose.onNodeWithTag("option-dwell").performClick()
         compose.onNodeWithTag("setting-人 / 动物停留阈值（秒）").performScrollTo()
         capture("phone-settings-channel.png")
-        compose.onNodeWithTag("channel-settings-back").performScrollTo().performClick()
+        repeat(3) { compose.onNodeWithTag("channel-settings-back").performScrollTo().performClick() }
         compose.onNodeWithTag("channel-detail-back").performClick()
         compose.onNodeWithTag("nav-settings").performClick()
         compose.onNodeWithTag("settings-category-storage").assertExists()

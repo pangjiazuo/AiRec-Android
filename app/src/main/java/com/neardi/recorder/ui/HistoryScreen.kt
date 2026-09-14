@@ -1,6 +1,7 @@
 package com.neardi.recorder.ui
 
 import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -44,6 +45,10 @@ fun HistoryScreen(kind: String, api: RecorderApi, active: Boolean, onVideo: (Str
     onSeekVideo: (String, String, Long, Long?) -> Unit = { url, title, _, _ -> onVideo(url, title) },
     onDownload: (String, String) -> Unit = { _, _ -> }) {
     require(fixedChannelId == null || fixedChannelId in 1..5) { "通道编号应为 1～5" }
+    var selectedEvent by rememberSaveable(api.baseUrl, kind, fixedChannelId) { mutableStateOf<String?>(null) }
+    NestedNavigation(selectedEvent != null)
+    BackHandler(selectedEvent != null) { selectedEvent = null }
+
     var channel by rememberSaveable(api.baseUrl, kind, fixedChannelId) { mutableStateOf("") }
     var type by rememberSaveable(api.baseUrl, kind, fixedChannelId) { mutableStateOf("") }
     var date by rememberSaveable(api.baseUrl, kind, fixedChannelId) { mutableStateOf("") }
@@ -90,14 +95,19 @@ fun HistoryScreen(kind: String, api: RecorderApi, active: Boolean, onVideo: (Str
         if (interval != null) RecordingTimeline.overlapsDay(interval, chosenDate, zone)
         else RecordingTimeline.parseStart(item.optString("created_at"))?.let { Instant.ofEpochMilli(it).atZone(zone).toLocalDate() == chosenDate } ?: true
     }
-    BoxWithConstraints(Modifier.fillMaxSize().background(RecorderBackground)) {
-        val columns = if (kind == "events") { if (maxWidth >= 1100.dp) 3 else if (maxWidth >= 650.dp) 2 else 1 }
-            else if (maxWidth >= 850.dp) 2 else 1
-        LazyVerticalGrid(GridCells.Fixed(columns), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp + bottomInset),
+    if (selectedEvent != null) {
+        EventDetails(api, JSONObject(selectedEvent!!), active, { selectedEvent = null }, onVideo)
+        return
+    }
+    Box(Modifier.fillMaxSize().background(RecorderBackground)) {
+        val columns = 1
+        LazyVerticalGrid(GridCells.Fixed(columns), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 24.dp + bottomInset),
             horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (showHeading) item(span = { GridItemSpan(maxLineSpan) }) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.weight(1f)) { PageHeading(if (kind == "events") "智能事件" else "录像回放", "") }
+                Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Box(Modifier.fillMaxWidth().height(62.dp), contentAlignment = Alignment.Center) {
+                        Text(if (kind == "events") "事件" else "回放", style = MaterialTheme.typography.titleLarge)
+                    }
                     if (fixedChannelId == null) ChoiceMenu("通道", listOf("" to "全部") + (1..5).map { "$it" to "AHD$it" }, channel) {
                         channel = it; date = ""
                     }
@@ -106,7 +116,7 @@ fun HistoryScreen(kind: String, api: RecorderApi, active: Boolean, onVideo: (Str
             if (kind == "events") item(span = { GridItemSpan(maxLineSpan) }) {
                 EventFilters(type, onChange = { type = it })
             }
-            if (kind == "recordings" && chosenDate != null) item(span = { GridItemSpan(maxLineSpan) }) {
+            if (kind == "recordings" && chosenDate != null && dates.size > 1) item(span = { GridItemSpan(maxLineSpan) }) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     RecordingDateSelector(chosenDate, dates, onChange = { date = it.toString() })
                 }
@@ -117,13 +127,22 @@ fun HistoryScreen(kind: String, api: RecorderApi, active: Boolean, onVideo: (Str
                     TextButton(onClick = { refresh++ }) { Text("立即重试") }
                 }
             } }
+            if (kind == "recordings" && shown.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) { Hint("最近完成的录像") }
             if (shown.isEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
-                SectionCard { Text(if (loading) "正在加载…" else if (kind == "events") "暂无符合筛选条件的事件" else "暂无已完成录像，请等待片段保存", color = RecorderMuted) }
+                Column(Modifier.fillMaxWidth().height(330.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                    RecorderGlyph(if (kind == "events") "event" else "playback", Modifier.size(43.dp), RecorderMuted)
+                    Spacer(Modifier.height(16.dp))
+                    Text(if (loading) "正在加载…" else if (kind == "events") "暂无事件" else "暂无录像", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(12.dp))
+                    Hint(if (kind == "events") "未找到符合筛选条件的事件" else "录像片段保存后会显示在这里")
+                }
             }
-            items(shown, key = { it.optString("id") }) { item ->
-                if (kind == "events") EventCard(api, item, active, onVideo, onImage)
-                else RecordingCard(api, item, onSeekVideo, onDownload)
-            }
+            if (kind == "events" && shown.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
+                GroupedRows { shown.forEachIndexed { i, event ->
+                    EventCard(api, event, active) { selectedEvent = event.toString() }
+                    if (i < shown.lastIndex) HorizontalDivider(color = RecorderLine)
+                } }
+            } else items(shown, key = { it.optString("id") }) { item -> RecordingCard(api, item, onSeekVideo, onDownload) }
             if (records.isNotEmpty()) item(span = { GridItemSpan(maxLineSpan) }) {
                 Text("最近 ${records.size.coerceAtMost(200)} 条${if (records.size >= 200) " · 最多载入 200 条" else ""}",
                     color = RecorderMuted, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 4.dp))
@@ -142,7 +161,7 @@ fun HistoryScreen(kind: String, api: RecorderApi, active: Boolean, onVideo: (Str
                 colors = FilterChipDefaults.filterChipColors(containerColor = MaterialTheme.colorScheme.surface,
                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer, selectedLabelColor = RecorderBlue, labelColor = RecorderInk),
                 border = FilterChipDefaults.filterChipBorder(enabled = true, selected = selected == value,
-                    borderColor = RecorderLine, selectedBorderColor = RecorderBlue.copy(alpha = .65f)))
+                    borderColor = Color.Transparent, selectedBorderColor = Color.Transparent))
         }
     }
 }
@@ -181,64 +200,42 @@ private fun recordingTitle(item: JSONObject) = "AHD${item.optInt("channel_id")} 
     val url = runCatching { api.mediaUrl(item.optString("url")) }.getOrNull()
     val available = item.optBoolean("available", false) && url != null
     val title = recordingTitle(item)
-    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(7.dp)) {
-                    Text("AHD${item.optInt("channel_id")}", Modifier.padding(horizontal = 7.dp, vertical = 5.dp), color = RecorderBlue, style = MaterialTheme.typography.labelSmall)
-                }
-                Text(dateText(item.optString("created_at")), Modifier.weight(1f), color = RecorderInk, style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text("MP4", color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
+    Surface(onClick = { url?.let { onSeekVideo(it, title, 0, RecordingTimeline.parseStart(item.optString("created_at"))) } },
+        enabled = available, shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface) {
+        Row(Modifier.fillMaxWidth().padding(15.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(color = MaterialTheme.colorScheme.primaryContainer, shape = RoundedCornerShape(6.dp)) {
+                Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) { RecorderGlyph("playback", Modifier.size(22.dp), RecorderBlue) }
             }
-            Text(item.optString("name"), color = RecorderMuted, style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text(item.metric("duration_seconds", " 秒"), color = RecorderMuted, style = MaterialTheme.typography.labelMedium)
-                Text(bytesText(item.optDouble("size_bytes", Double.NaN)), color = RecorderMuted, style = MaterialTheme.typography.labelMedium)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(item.optString("name").ifBlank { "AHD${item.optInt("channel_id")}" }, style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(dateText(item.optString("created_at")), color = RecorderMuted, style = MaterialTheme.typography.bodySmall)
+                if (!available) Text("录像暂不可用", color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
             }
-            if (!available) Text(item.optString("error").ifBlank { "录像介质未连接或文件不可用" }, color = RecorderMuted, style = MaterialTheme.typography.bodySmall)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { url?.let { onSeekVideo(it, title, 0, RecordingTimeline.parseStart(item.optString("created_at"))) } },
-                    enabled = available, contentPadding = PaddingValues(horizontal = 0.dp)) {
-                    PlayGlyph(if (available) RecorderBlue else RecorderMuted.copy(alpha = .5f)); Spacer(Modifier.width(7.dp)); Text("播放录像")
-                }
-                TextButton(onClick = { url?.let { onDownload(it, item.optString("name").ifBlank { "AHD${item.optInt("channel_id")}.mp4" }) } },
-                    enabled = available, modifier = Modifier.testTag("recording-download-${item.optString("id")}")) {
-                    RecorderGlyph("download", modifier = Modifier.size(19.dp)); Spacer(Modifier.width(5.dp)); Text("下载")
-                }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text(item.metric("duration_seconds", " 秒"), style = MaterialTheme.typography.labelMedium)
+                Text(bytesText(item.optDouble("size_bytes", Double.NaN)), color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
             }
         }
     }
 }
 
-@Composable private fun EventCard(api: RecorderApi, item: JSONObject, active: Boolean, onVideo: (String, String) -> Unit, onImage: (String, String) -> Unit) {
+@Composable private fun EventCard(api: RecorderApi, item: JSONObject, active: Boolean, onSelect: () -> Unit) {
     val type = item.optString("event_type", "dwell").takeIf { it in EventNames } ?: "dwell"
     val title = if (type == "dwell") "长时间停留" else "${EventNames[type]}出现"
-    val caption = "AHD${item.optInt("channel_id")} · ${dateText(item.optString("created_at"))}"
     val imageUrl = runCatching { api.mediaUrl(item.optString("snapshot_url")) }.getOrNull()
-    val videoUrl = if (item.optBoolean("recording_available", false)) runCatching { api.mediaUrl(item.optString("recording_url")) }.getOrNull() else null
-    Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surface) {
-        Column {
-            RemoteImage(imageUrl, active, Modifier.fillMaxWidth().aspectRatio(16f / 9f).clickable(enabled = imageUrl != null) {
-                imageUrl?.let { onImage(it, "$title · $caption") }
-            }, contentScale = ContentScale.Crop)
-            Column(Modifier.padding(horizontal = 11.dp, vertical = 10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Box(Modifier.size(7.dp).background(eventColor(type), CircleShape))
-                    Text(title, Modifier.weight(1f), color = RecorderInk, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(shortEventTime(item.optString("created_at")), color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
+    Surface(onClick = onSelect, shape = RoundedCornerShape(0.dp), color = MaterialTheme.colorScheme.surface) {
+        Row(Modifier.fillMaxWidth().padding(vertical = 15.dp), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            RemoteImage(imageUrl, active, Modifier.width(78.dp).height(49.dp), contentScale = ContentScale.Crop)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Box(Modifier.size(6.dp).background(eventColor(type), CircleShape))
+                    Text(title, style = MaterialTheme.typography.titleSmall)
                 }
-                Text(caption, color = RecorderMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (type == "dwell") Text("${EventNames[item.optString("category")] ?: "目标"} · 停留 ${item.metric("dwell_seconds", " 秒")}",
-                    color = RecorderMuted, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (videoUrl != null) TextButton(onClick = { onVideo(videoUrl, "$title · $caption") },
-                    modifier = Modifier.heightIn(min = 44.dp), contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)) {
-                    PlayGlyph(RecorderBlue); Spacer(Modifier.width(5.dp)); Text("查看关联录像", style = MaterialTheme.typography.labelMedium)
-                }
-                else Text(if (item.has("recording_url")) "录像已清理或介质离线" else "等待录像片段保存", color = RecorderMuted,
-                    style = MaterialTheme.typography.labelSmall, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text("AHD${item.optInt("channel_id")} · ${dateText(item.optString("created_at"))}", color = RecorderMuted,
+                    style = MaterialTheme.typography.labelSmall)
             }
+            RecorderGlyph("chevron", Modifier.size(15.dp), RecorderMuted)
         }
     }
 }

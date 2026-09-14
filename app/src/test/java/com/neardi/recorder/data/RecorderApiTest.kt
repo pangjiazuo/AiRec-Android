@@ -40,6 +40,28 @@ class RecorderApiTest {
         server.shutdown()
     }
 
+    private fun truncatedResponse() = MockResponse().setBody("{\"ok\":true}")
+        .setHeader("Content-Length", 12).setSocketPolicy(SocketPolicy.DISCONNECT_AT_END)
+
+    @Test fun truncatedReadRetriesButOnlyReturnsACompleteResponse() = runBlocking {
+        server.enqueue(truncatedResponse())
+        server.enqueue(MockResponse().setBody("{\"ok\":true}"))
+        assertTrue(api.getJson("/api/status").getBoolean("ok"))
+        assertEquals(2, server.requestCount)
+    }
+
+    @Test fun repeatedTruncationHasABoundedRetryCount() = runBlocking {
+        repeat(3) { server.enqueue(truncatedResponse()) }
+        try { api.getJson("/api/status"); fail("必须拒绝不完整响应") } catch (_: java.io.IOException) { }
+        assertEquals(3, server.requestCount)
+    }
+
+    @Test fun uncertainWriteIsNeverRepeatedAutomatically() = runBlocking {
+        server.enqueue(truncatedResponse())
+        try { api.putConfig(JSONObject().put("test", true)); fail("必须报告写入结果不确定") } catch (_: java.io.IOException) { }
+        assertEquals(1, server.requestCount)
+    }
+
     @Test fun baseAddressNormalizesIpv4HostAndIpv6() {
         assertEquals("http://192.168.10.172:8080", RecorderApi.normalizeBaseUrl(" 192.168.10.172:8080/ "))
         assertEquals("https://recorder.local", RecorderApi.normalizeBaseUrl("https://recorder.local/"))

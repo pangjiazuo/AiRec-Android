@@ -29,7 +29,7 @@ import kotlinx.coroutines.isActive
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 @Composable
 fun ChannelArchivePlayer(url: String, initialPosition: Long, endPosition: Long?, active: Boolean,
-    scrubbing: Boolean, seekRequestId: Long, modifier: Modifier = Modifier, minimumPosition: Long = 0,
+    scrubbing: Boolean, seekRequestId: Long, modifier: Modifier = Modifier, minimumPosition: Long = 0, playing: Boolean = true, playbackSpeed: Float = 1f,
     onEnded: () -> Unit) {
     val context = LocalContext.current
     val range = remember(minimumPosition, endPosition) { ArchivePlaybackRange(minimumPosition, endPosition) }
@@ -71,10 +71,11 @@ fun ChannelArchivePlayer(url: String, initialPosition: Long, endPosition: Long?,
     }
     DisposableEffect(player) { onDispose { player.release() } }
     LaunchedEffect(player, seekRequestId) { completed = false; player.seekTo(range.toPlayerPosition(position)) }
+    LaunchedEffect(player, playing, playbackSpeed) { player.setPlaybackSpeed(playbackSpeed); player.playWhenReady = active && !scrubbing && playIntent && playing }
     LaunchedEffect(player, active, scrubbing, seekRequestId, endPosition) {
         if (!active) { position = range.toOriginalPosition(player.currentPosition); player.stop(); return@LaunchedEffect }
         if (player.playbackState == Player.STATE_IDLE) { player.seekTo(range.toPlayerPosition(position)); player.prepare() }
-        player.playWhenReady = active && !scrubbing && playIntent
+        player.playWhenReady = active && !scrubbing && playIntent && playing
         while (active && isActive) {
             position = range.toOriginalPosition(player.currentPosition)
             if (!scrubbing && !completed && (player.playbackState == Player.STATE_ENDED || (endPosition != null && position >= endPosition))) {

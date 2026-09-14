@@ -72,18 +72,21 @@ fun DayDateSelector(date: LocalDate, onDate: (LocalDate) -> Unit) {
     var showPicker by rememberSaveable { mutableStateOf(false) }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween) {
-        TextButton(onClick = { onDate(date.minusDays(1)) }, modifier = Modifier.testTag("timeline-previous-day")) { Text("前一天") }
+        IconButton(onClick = { onDate(date.minusDays(1)) }, modifier = Modifier.testTag("timeline-previous-day")) { RecorderGlyph("back", Modifier.size(18.dp)) }
         TextButton(onClick = { showPicker = true }, modifier = Modifier.testTag("timeline-date")) { Text(date.toString()) }
-        TextButton(onClick = { onDate(date.plusDays(1)) }, enabled = date < LocalDate.now(),
-            modifier = Modifier.testTag("timeline-next-day")) { Text("后一天") }
+        IconButton(onClick = { onDate(date.plusDays(1)) }, enabled = date < LocalDate.now(),
+            modifier = Modifier.testTag("timeline-next-day")) { RecorderGlyph("chevron", Modifier.size(18.dp)) }
     }
     if (showPicker) {
         // Material 日期选择器以 UTC 午夜表示日历日期；请求时仍使用设备本地时区。
-        val picker = rememberDatePickerState(initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli())
+        val picker = remember(date) { DatePickerState(locale = java.util.Locale.SIMPLIFIED_CHINESE, initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli()) }
         val selected = picker.selectedDateMillis?.let { Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate() }
-        DatePickerDialog(onDismissRequest = { showPicker = false }, confirmButton = {
-            TextButton(onClick = { selected?.let(onDate); showPicker = false }, enabled = selected != null && selected <= LocalDate.now()) { Text("确定") }
-        }, dismissButton = { TextButton(onClick = { showPicker = false }) { Text("取消") } }) { DatePicker(state = picker) }
+        ModalBottomSheet(onDismissRequest = { showPicker = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = RecorderBackground) {
+            DatePicker(state = picker, title = null, headline = null, showModeToggle = false)
+            Button(onClick = { selected?.let(onDate); showPicker = false }, enabled = selected != null && selected <= LocalDate.now(),
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), shape = RoundedCornerShape(10.dp)) { Text("确定") }
+            Spacer(Modifier.height(12.dp))
+        }
     }
 }
 
@@ -98,7 +101,7 @@ fun VerticalDayTimeline(index: DayIndex, day: TimelineWindow, zone: ZoneId, enab
     var lastCommitted by rememberSaveable { mutableLongStateOf(initialTime) }
     var scrollCommand by remember { mutableIntStateOf(0) }
     var programmatic by remember { mutableStateOf(true) }
-    val hourHeight = if (precise) 960.dp else 160.dp
+    val hourHeight = if (precise) 960.dp else 320.dp
     val pxPerMs = with(density) { hourHeight.toPx() } / 3_600_000.0
     val totalHeight = hourHeight * ((day.endMs - day.startMs) / 3_600_000f)
     // 概览的一像素可跨数秒；停滑后保留精确选时，不让绘制像素反向量化时间。
@@ -160,20 +163,13 @@ fun VerticalDayTimeline(index: DayIndex, day: TimelineWindow, zone: ZoneId, enab
     val recording = RecorderBlue.copy(alpha = .24f)
     val colors = EventNames.keys.associateWith { eventColor(it) }
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-            TextButton(onClick = { anchor = selected; programmatic = true; precise = false }, enabled = precise, modifier = Modifier.testTag("timeline-overview")) { Text("概览") }
-            TextButton(onClick = { anchor = selected; programmatic = true; precise = true }, enabled = !precise, modifier = Modifier.testTag("timeline-precise")) { Text("精细") }
-        }
-        Text("选中时刻  " + Instant.ofEpochMilli(selected).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm:ss XXX")),
-            Modifier.align(Alignment.CenterHorizontally).testTag("timeline-selected-time"), color = RecorderBlue,
-            style = MaterialTheme.typography.titleMedium)
         Row(Modifier.fillMaxWidth().padding(vertical = 6.dp), horizontalArrangement = Arrangement.SpaceEvenly) {
             EventNames.forEach { (type, name) -> Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(Modifier.size(6.dp).background(colors.getValue(type), CircleShape)); Spacer(Modifier.width(4.dp))
                 Text(name, color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
             } }
         }
-        Surface(Modifier.fillMaxWidth().weight(1f), shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+        Surface(Modifier.fillMaxWidth().weight(1f), shape = RoundedCornerShape(0.dp), color = RecorderBackground) {
             BoxWithConstraints(Modifier.fillMaxSize().testTag("channel-day-timeline").semantics {
                 stateDescription = if (enabled) "已加载" else "加载中"
                 progressBarRangeInfo = ProgressBarRangeInfo(day.fractionAt(selected), 0f..1f)
@@ -190,37 +186,43 @@ fun VerticalDayTimeline(index: DayIndex, day: TimelineWindow, zone: ZoneId, enab
                     Spacer(Modifier.height(half))
                     Canvas(Modifier.fillMaxWidth().height(totalHeight)) {
                         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = ink.toArgb(); textSize = 11.dp.toPx() }
-                        val left = 96.dp.toPx()
+                        val left = size.width * .36f
                         val right = size.width - 20.dp.toPx()
                         val scale = size.height / (day.endMs - day.startMs)
                         index.recordings.forEach { r ->
                             val top = (r.startMs.coerceAtLeast(day.startMs) - day.startMs) * scale
                             val bottom = (r.endMs.coerceAtMost(day.endMs) - day.startMs) * scale
-                            drawRect(recording, Offset(left, top), Size((right-left).coerceAtLeast(1f), (bottom-top).coerceAtLeast(1f)))
+                            drawRect(recording, Offset(left, top), Size(16.dp.toPx(), (bottom-top).coerceAtLeast(1f)))
                         }
                         EventNames.keys.forEachIndexed { lane, type -> index.events.filter { it.type == type }.forEach { event ->
                             val top = (event.startMs - day.startMs) * scale
                             val bottom = (event.endMs - day.startMs) * scale
-                            drawRect(colors.getValue(type), Offset(left + 6.dp.toPx() + lane * 10.dp.toPx(), top),
-                                Size(6.dp.toPx(), (bottom-top).coerceAtLeast(2.dp.toPx())))
+                            drawRect(colors.getValue(type), Offset(left + 23.dp.toPx() + lane * 14.dp.toPx(), top),
+                                Size(8.dp.toPx(), (bottom-top).coerceAtLeast(2.dp.toPx())))
                         } }
                         var time = day.startMs
                         while (time <= day.endMs) {
                             val y = (time - day.startMs) * scale
-                            val hour = (time - day.startMs) % 3_600_000 == 0L
-                            drawLine(line, Offset(if (hour) left - 12.dp.toPx() else left - 6.dp.toPx(), y), Offset(left, y), 1.dp.toPx())
+                            val hour = (time - day.startMs) % (if (precise) 300_000 else 600_000) == 0L
+                            drawLine(line, Offset(44.dp.toPx(), y), Offset(size.width, y), 1.dp.toPx())
                             if (hour) drawContext.canvas.nativeCanvas.drawText(
-                                if (time == day.endMs) "24:00" else Instant.ofEpochMilli(time).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm XXX")),
+                                if (time == day.endMs) "24:00" else Instant.ofEpochMilli(time).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm")),
                                 6.dp.toPx(), y + 4.dp.toPx(), paint)
-                            time += if (precise) 60_000 else 900_000
+                            time += if (precise) 60_000 else 600_000
                         }
                     }
                     Spacer(Modifier.height(half))
                 }
-                HorizontalDivider(Modifier.align(Alignment.Center), color = RecorderBlue, thickness = 1.dp)
+                HorizontalDivider(Modifier.align(Alignment.Center).padding(start = 54.dp), color = RecorderBlue, thickness = 1.dp)
+                Text(Instant.ofEpochMilli(selected).atZone(zone).format(DateTimeFormatter.ofPattern("HH:mm:ss")),
+                    Modifier.align(Alignment.CenterStart).background(RecorderBackground).testTag("timeline-selected-time"), color = RecorderBlue, style = MaterialTheme.typography.labelSmall)
+                Row(Modifier.align(Alignment.BottomEnd).background(RecorderBackground)) {
+                    TextButton(onClick = { anchor = selected; programmatic = true; precise = false }, enabled = precise, modifier = Modifier.testTag("timeline-overview")) { Text("概览", style = MaterialTheme.typography.labelSmall) }
+                    TextButton(onClick = { anchor = selected; programmatic = true; precise = true }, enabled = !precise, modifier = Modifier.testTag("timeline-precise")) { Text("精细", style = MaterialTheme.typography.labelSmall) }
+                }
             }
         }
-        Text("上下滑动选择时间 · 蓝色为录像，空白为无录像", Modifier.padding(vertical = 6.dp),
+        Text("上下滑动查看全天录像", Modifier.padding(vertical = 6.dp),
             color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
     }
 }

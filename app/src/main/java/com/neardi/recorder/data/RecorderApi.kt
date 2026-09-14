@@ -29,8 +29,18 @@ class RecorderApi(baseUrl: String, client: OkHttpClient = defaultClient()) {
     suspend fun getJson(path: String): JSONObject {
         val url = checkedUrl(path)
         require(url.encodedPath.startsWith("/api/")) { "JSON 请求必须使用 /api/ 接口" }
-        return requestJson(Request.Builder().url(url).header("Accept", "application/json")
-            .header("Cache-Control", "no-cache").get().build())
+        val request = Request.Builder().url(url).header("Accept", "application/json")
+            .header("Cache-Control", "no-cache").get().build()
+        // 仅读取请求可安全重试；未收到完整 JSON 时绝不展示半份索引。
+        repeat(3) { attempt ->
+            try { return requestJson(request) } catch (error: IOException) {
+                val truncated = error is java.io.EOFException ||
+                    (error is java.net.ProtocolException && error.message?.contains("unexpected end of stream") == true)
+                if (!truncated || attempt == 2) throw error
+                kotlinx.coroutines.delay(150L * (attempt + 1))
+            }
+        }
+        error("unreachable")
     }
 
     /** 全天索引使用带时区的绝对时间，不把最近 200 条误当作一天。 */
@@ -106,14 +116,14 @@ class RecorderApi(baseUrl: String, client: OkHttpClient = defaultClient()) {
     }
 
     companion object {
-        const val DEFAULT_ENDPOINT = "http://192.168.10.172:8080"
+        const val DEFAULT_ENDPOINT = "http://192.168.10.209:8080"
         private const val MAX_JSON_BYTES = 2 * 1_024 * 1_024
 
         fun normalizeBaseUrl(input: String): String {
             val text = input.trim()
             require(text.isNotEmpty() && text.none { it.isWhitespace() || it.isISOControl() || it == '\\' }) { "请输入有效的录像机地址" }
             val candidate = if ("://" in text) text else "http://$text"
-            val url = candidate.toHttpUrlOrNull() ?: throw IllegalArgumentException("地址格式错误，例如 192.168.10.172:8080")
+            val url = candidate.toHttpUrlOrNull() ?: throw IllegalArgumentException("地址格式错误，例如 192.168.10.209:8080")
             require(url.username.isEmpty() && url.password.isEmpty()) { "地址不能包含用户名或密码" }
             require(url.encodedPath == "/" && url.query == null && url.fragment == null) { "只填写主机地址和端口，无需页面路径" }
             return url.toString().removeSuffix("/")

@@ -14,6 +14,7 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.asAndroidBitmap
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -94,15 +95,15 @@ class RecorderUiTest {
         scrollToCamera(1)
         compose.onNodeWithTag("camera-1").performClick()
         compose.onNodeWithTag("channel-detail").assertIsDisplayed()
-        compose.onNodeWithText("退出全屏").assertDoesNotExist()
+        compose.onNodeWithContentDescription("退出全屏").assertDoesNotExist()
         compose.onNodeWithTag("channel-preview-1").performTouchInput { click() }
-        compose.onNodeWithText("退出全屏").assertDoesNotExist()
+        compose.onNodeWithContentDescription("退出全屏").assertDoesNotExist()
         compose.onNodeWithTag("channel-fullscreen").performClick()
-        compose.onNodeWithText("退出全屏").assertIsDisplayed()
+        compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed()
         compose.waitUntil(10_000) {
             compose.onAllNodesWithContentDescription("AHD1实时画面", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText("退出全屏").performClick()
+        compose.onNodeWithContentDescription("退出全屏").performClick()
         compose.onNodeWithTag("channel-detail").assertIsDisplayed()
         compose.onNodeWithTag("channel-detail-back").performClick()
         compose.onNodeWithTag("nav-live").assertIsDisplayed()
@@ -114,39 +115,44 @@ class RecorderUiTest {
     @Test fun recordingAndEventNavigationSendCombinedFiltersAndRetainThemAfterRotation() {
         navigate("回放")
         compose.waitUntil(10_000) { fixture.requests.any { it.startsWith("GET /api/recordings") } }
-        compose.onNodeWithText("录像回放").assertIsDisplayed()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("播放录像").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText("播放录像").assertIsNotEnabled()
+        compose.onAllNodesWithText("回放").assertCountEquals(2)
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("录像暂不可用").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("录像暂不可用").assertIsDisplayed()
         navigate("事件")
         compose.onNodeWithTag("event-filter-vehicle").performClick()
-        compose.onNodeWithText("通道：全部 ▾").performClick()
+        compose.onNodeWithTag("choice-通道").performClick()
         compose.onNodeWithText("AHD2", substring = false).performClick()
         compose.waitUntil(10_000) { fixture.requests.any { it.contains("channel_id=2") && it.contains("event_type=vehicle") } }
         compose.waitUntil(10_000) { compose.onAllNodesWithText("车出现").fetchSemanticsNodes().isNotEmpty() }
         rotate()
         compose.onNodeWithTag("event-filter-vehicle").assertIsDisplayed().assertIsSelected()
-        compose.onNodeWithText("通道：AHD2 ▾").assertIsDisplayed()
-        compose.onNodeWithText("智能事件").assertIsDisplayed()
+        compose.onNodeWithTag("choice-通道").assertIsDisplayed()
+        compose.onAllNodesWithText("事件").assertCountEquals(2)
         assertTrue(fixture.savedConfigs.isEmpty())
     }
 
     @Test fun editedDwellSurvivesRotationAndCopiesToOtherChannelsBeforeSaving() {
         openChannelSettings(1)
+        openDwellFromBasic()
         compose.onNodeWithTag("setting-人 / 动物停留阈值（秒）").performScrollTo().performTextReplacement("12")
+        basicFromDwell()
         compose.onNodeWithTag("setting-通道名称").performScrollTo().performTextReplacement("入口测试")
         rotate()
         compose.onNodeWithTag("setting-通道名称").performScrollTo().assertTextContains("入口测试")
+        openDwellFromBasic()
         compose.onNodeWithTag("setting-人 / 动物停留阈值（秒）").performScrollTo().assertTextContains("12")
-        compose.onNodeWithTag("copy-settings").performScrollTo().performClick()
+        backSetting()
+        backSetting()
+        compose.onNodeWithTag("option-copy").performScrollTo().performClick()
         compose.onNodeWithText("复制参数").performClick()
         fixture.putResponseDelayMillis = 2_000
-        compose.onNodeWithTag("save-config").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithTag("save-config").assertIsEnabled().performClick()
         compose.waitUntil(10_000) { fixture.savedConfigs.isNotEmpty() }
         compose.onNodeWithTag("save-config").assertTextContains("正在保存…")
         // 响应仍在路上时重建页面，成功结果应由 ViewModel 传给新页面。
         rotate()
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("设置已与设备同步").fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithTag("save-config").performScrollTo().assertIsNotEnabled()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("设置已保存并应用。受影响通道可能需要几秒重新连接。").fetchSemanticsNodes().isNotEmpty() }
+        assertEquals("保存后草稿应已同步", 1, fixture.savedConfigs.size)
         val saved = fixture.savedConfigs.last()
         val channels = saved.getJSONArray("channels")
         assertEquals(5, channels.length())
@@ -211,12 +217,12 @@ class RecorderUiTest {
         val nextAddress = nextServer.url("/").toString().removeSuffix("/")
         openChannelSettings(1)
         compose.onNodeWithTag("setting-通道名称").performScrollTo().performTextReplacement("旧设备的未保存草稿")
-        compose.onNodeWithTag("channel-settings-back").performScrollTo().performClick()
+        leaveChannelSettings()
         compose.onNodeWithTag("channel-detail-back").performClick()
         navigate("设置")
         compose.onNodeWithTag("settings-category-connection").performClick()
         compose.onNodeWithTag("endpoint-input").performScrollTo().performTextReplacement(nextAddress)
-        compose.onNodeWithText("连接设备").performScrollTo().performClick()
+        compose.onNodeWithText("连接设备").performClick()
         // 地址页可能没有本页草稿；若出现确认框则确认，否则等待新端点。
         compose.waitUntil(15_000) {
             compose.onAllNodesWithText("切换设备").fetchSemanticsNodes().isNotEmpty() ||
@@ -246,13 +252,13 @@ class RecorderUiTest {
         compose.onNodeWithText("通道2的测试录像").assertDoesNotExist()
         capture("channel-detail-portrait.png")
         compose.onNodeWithText("通道1的测试录像").assertDoesNotExist()
-        compose.onNodeWithText("通道：全部 ▾").assertDoesNotExist()
+        compose.onNodeWithTag("choice-通道").assertDoesNotExist()
         compose.onNodeWithTag("channel-tab-events").performClick()
         compose.onNodeWithTag("event-filter-vehicle").performClick()
         compose.waitUntil(10_000) { fixture.requests.any { it.startsWith("GET /api/events?") && it.contains("channel_id=2") && it.contains("event_type=vehicle") } }
         compose.waitUntil(10_000) { compose.onAllNodesWithText("车出现").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("channel-fullscreen").performClick()
-        compose.onNodeWithText("退出全屏").assertIsDisplayed().performClick()
+        compose.onNodeWithContentDescription("退出全屏").assertIsDisplayed().performClick()
         compose.onNodeWithTag("channel-detail").assertIsDisplayed()
         compose.onNodeWithTag("event-filter-vehicle").assertIsDisplayed().assertIsSelected()
         rotate()
@@ -294,7 +300,7 @@ class RecorderUiTest {
         compose.waitUntil(10_000) { compose.onAllNodesWithText("所选时间没有可用录像").fetchSemanticsNodes().isNotEmpty() }
         fun selectedFraction() = compose.onNodeWithTag("channel-day-timeline").fetchSemanticsNode().config[SemanticsProperties.ProgressBarRangeInfo].current
         compose.waitUntil(10_000) { kotlin.math.abs(selectedFraction() - .375f) < .0005f }
-        compose.onNodeWithTag("timeline-selected-time").assertTextContains("选中时刻", substring = true)
+        compose.onNodeWithTag("timeline-selected-time").assertTextContains("09:00:00", substring = true)
         compose.onNodeWithTag("timeline-precise").performClick()
         compose.waitUntil(10_000) { kotlin.math.abs(selectedFraction() - .375f) < .0005f }
         rotate()
@@ -310,10 +316,11 @@ class RecorderUiTest {
         openChannelSettings(2)
         capture("channel-settings.png")
         compose.onNodeWithTag("setting-通道名称").performScrollTo().assertTextContains("AHD2").performTextReplacement("后门二路")
+        openDwellFromBasic()
         compose.onNodeWithTag("setting-人 / 动物停留阈值（秒）").performScrollTo().performTextReplacement("17")
-        compose.onNodeWithTag("save-config").performScrollTo().performClick()
+        compose.onNodeWithTag("save-config").performClick()
         compose.waitUntil(10_000) { fixture.savedConfigs.isNotEmpty() }
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("设置已与设备同步").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("设置已保存并应用。受影响通道可能需要几秒重新连接。").fetchSemanticsNodes().isNotEmpty() }
         val saved = fixture.savedConfigs.single()
         val before = BoardFixture.config()
         for (index in 0 until 5) {
@@ -328,7 +335,8 @@ class RecorderUiTest {
         }
         assertTrue(before.getJSONObject("storage").jsonMatches(saved.getJSONObject("storage")))
         assertTrue(before.getJSONObject("server").jsonMatches(saved.getJSONObject("server")))
-        compose.onNodeWithTag("channel-settings-back").performScrollTo().performClick()
+        backSetting()
+        leaveChannelSettings()
         compose.onNodeWithTag("channel-preview-2").assertExists()
     }
 
@@ -340,24 +348,24 @@ class RecorderUiTest {
         compose.onNodeWithTag("setting-通道名称").assertDoesNotExist()
         compose.onNodeWithTag("settings-category-connection").performClick()
         compose.onNodeWithTag("endpoint-input").assertExists()
-        compose.onNodeWithTag("settings-category-back").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-category-back").performClick()
         compose.onNodeWithTag("settings-category-model").performClick()
         compose.waitUntil(10_000) { fixture.requests.any { it.startsWith("GET /api/diagnostics/model") } }
-        compose.onNodeWithTag("settings-category-back").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-category-back").performClick()
         compose.onNodeWithTag("settings-category-logs").performClick()
-        compose.onNodeWithTag("settings-category-back").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-category-back").performClick()
         compose.onNodeWithTag("settings-category-storage").performClick()
         compose.waitUntil(10_000) { compose.onAllNodesWithTag("setting-录像空间上限（GB）").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("setting-录像空间上限（GB）").performScrollTo().performTextReplacement("32")
-        compose.onNodeWithTag("settings-category-back").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-category-back").performClick()
         compose.onNodeWithTag("settings-category-connection").performClick()
-        compose.onNodeWithTag("settings-category-back").performScrollTo().performClick()
+        compose.onNodeWithTag("settings-category-back").performClick()
         compose.onNodeWithTag("settings-category-storage").performClick()
         compose.onNodeWithTag("setting-录像空间上限（GB）").performScrollTo().assertTextContains("32")
         rotate()
         compose.onNodeWithTag("setting-录像空间上限（GB）").performScrollTo().assertTextContains("32")
         assertTrue(fixture.savedConfigs.isEmpty())
-        compose.onNodeWithTag("save-config").performScrollTo().performClick()
+        compose.onNodeWithTag("save-config").performClick()
         compose.waitUntil(10_000) { fixture.savedConfigs.isNotEmpty() }
         val saved = fixture.savedConfigs.single()
         assertEquals(32, saved.getJSONObject("storage").getInt("max_gb"))
@@ -409,10 +417,10 @@ class RecorderUiTest {
             openChannelSettings(1)
             compose.onNodeWithTag("setting-通道名称").performScrollTo().performTextReplacement("一号未保存草稿")
             hideKeyboard()
-            compose.onNodeWithTag("save-config").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
+            compose.onNodeWithTag("save-config").assertIsDisplayed().assertIsEnabled().performClick()
             compose.waitUntil(10_000) { fixture.requests.any { it.startsWith("PUT /api/config") } }
             // 保证失败响应在离开一号设置后到达，模拟慢网络下切换通道。
-            compose.onNodeWithTag("channel-settings-back").performScrollTo().performClick()
+            leaveChannelSettings()
             compose.onNodeWithTag("channel-detail-back").performClick()
             openChannelSettings(2)
             failureGate.countDown()
@@ -421,13 +429,13 @@ class RecorderUiTest {
             }
             compose.onNodeWithTag("setting-通道名称").performScrollTo().performTextReplacement("二号已保存")
             hideKeyboard()
-            compose.onNodeWithTag("save-config").performScrollTo().assertIsDisplayed().assertIsEnabled().performClick()
-            compose.waitUntil(10_000) { compose.onAllNodesWithText("设置已与设备同步").fetchSemanticsNodes().isNotEmpty() }
-            compose.onNodeWithTag("channel-settings-back").performScrollTo().performClick()
+            compose.onNodeWithTag("save-config").assertIsDisplayed().assertIsEnabled().performClick()
+            compose.waitUntil(10_000) { compose.onAllNodesWithText("设置已保存并应用。受影响通道可能需要几秒重新连接。").fetchSemanticsNodes().isNotEmpty() }
+            leaveChannelSettings()
             compose.onNodeWithTag("channel-detail-back").performClick()
             openChannelSettings(1)
             compose.onNodeWithTag("setting-通道名称").performScrollTo().assertTextContains("一号未保存草稿")
-            compose.onNodeWithTag("save-config").performScrollTo().assertIsEnabled()
+            compose.onNodeWithTag("save-config").assertIsEnabled()
             compose.onNodeWithText("测试一号通道保存失败").assertExists()
             val saved = fixture.savedConfigs.single()
             assertEquals("AHD1", saved.getJSONArray("channels").getJSONObject(0).getString("name"))
@@ -436,6 +444,122 @@ class RecorderUiTest {
         } finally {
             failureGate.countDown()
         }
+    }
+
+    @Test fun approvedPhonePagesAndEventDetailsUseSafeFixture() {
+        capture("new-live.png")
+        openChannel(1)
+        capture("new-channel.png")
+        compose.onNodeWithTag("channel-detail-back").performClick()
+        navigate("事件")
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("车出现").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("车出现").performClick()
+        compose.onNodeWithText("事件详情").assertIsDisplayed()
+        compose.onNodeWithTag("option-event-video").assertIsNotEnabled()
+        capture("new-event-detail.png")
+        compose.onNodeWithTag("event-detail-back").performClick()
+        compose.onAllNodesWithText("事件").assertCountEquals(2)
+        navigate("设置")
+        capture("new-settings.png")
+        compose.onNodeWithTag("settings-category-logs").performScrollTo().performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithText("recorder.log").fetchSemanticsNodes().isNotEmpty() }
+        capture("new-logs.png")
+        assertTrue(fixture.savedConfigs.isEmpty())
+    }
+
+    /** 逐页截取真实 Compose 界面，统一测试数据，禁止把设计 HTML 当成运行截图。 */
+    @Test fun captureApprovedPages() {
+        fun shot(name: String) { compose.waitForIdle(); Thread.sleep(350); compose.waitForIdle(); capture("approved-$name.png") }
+        fun option(id: String) { compose.onNodeWithTag("option-$id").performScrollTo().performClick() }
+        fun back() { compose.onNodeWithTag("channel-settings-back").performClick() }
+        shot("live")
+        openChannel(1); shot("channel")
+        compose.onNodeWithTag("channel-tab-events").performClick(); shot("channel-events")
+        compose.onNodeWithTag("channel-tab-recordings").performClick()
+        compose.onNodeWithTag("timeline-date").performClick(); shot("date")
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        compose.onNodeWithTag("channel-fullscreen").performClick()
+        compose.waitUntil(10000) { context.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+        compose.waitForIdle(); Thread.sleep(400); shot("fullscreen")
+        compose.onNodeWithContentDescription("退出全屏").performClick()
+        compose.onNodeWithTag("channel-settings-entry").performClick(); shot("channel-settings")
+        for (route in listOf("basic", "image", "recording", "detection")) {
+            option(route); shot(when(route) { "basic" -> "channel-basic"; "recording" -> "recording-settings"; else -> route })
+            val children = when(route) { "image" -> listOf("resolution", "preview"); "detection" -> listOf("categories", "dwell", "confidence", "advanced"); else -> emptyList() }
+            for (child in children) { option(child); shot(when(child) { "preview" -> "fps"; "advanced" -> "detection-advanced"; else -> child }); if (child in listOf("resolution", "preview")) compose.onNodeWithText("确定").performClick() else back() }
+            if (route == "recording") {
+                compose.onNodeWithTag("option-choice-片段时长").performClick(); shot("segment")
+                InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            }
+            back()
+        }
+        option("copy"); shot("copy"); compose.onNodeWithText("取消", useUnmergedTree = true).performClick()
+        back(); compose.onNodeWithTag("channel-detail-back").performClick()
+        navigate("回放"); compose.waitUntil(10000) { fixture.requests.any { it.contains("/api/recordings") } }; shot("recordings")
+        navigate("事件"); shot("events")
+        navigate("设置"); shot("settings")
+        for (route in listOf("connection", "device", "storage", "model", "logs", "appearance", "about")) {
+            if (route == "device") compose.onNodeWithText("家中录像机").performClick()
+            else compose.onNodeWithTag("settings-category-$route").performScrollTo().performClick()
+            compose.waitForIdle(); Thread.sleep(500); shot(route)
+            if (route == "model") { option("model-details"); shot("model-details"); compose.onNodeWithTag("settings-category-back").performClick() }
+            if (route == "logs") { option("0"); shot("log-detail"); compose.onNodeWithTag("settings-category-back").performClick() }
+            if (route == "about") { option("licenses"); shot("licenses"); compose.onNodeWithTag("settings-category-back").performClick() }
+            compose.onNodeWithTag("nav-settings").assertDoesNotExist()
+            compose.onNodeWithTag("settings-category-back").performClick()
+        }
+        assertTrue(fixture.savedConfigs.isEmpty())
+    }
+
+    @Test fun captureFullscreenAppView() {
+        openChannel(1)
+        compose.onNodeWithTag("channel-fullscreen").performClick()
+        compose.waitUntil(10000) { context.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE }
+        compose.waitForIdle(); Thread.sleep(500)
+        // 直接捕获 Compose 应用视图，不包含系统首次全屏引导窗口。
+        val bitmap = compose.onRoot().captureToImage().asAndroidBitmap()
+        val out = File(context.getExternalFilesDir(null), "test-results/approved-fullscreen.png")
+        out.parentFile!!.mkdirs()
+        out.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        compose.onNodeWithContentDescription("退出全屏").performClick()
+    }
+
+    @Test fun captureEmptyFailureAndMediaPages() {
+        fun shot(name: String) { compose.waitForIdle(); Thread.sleep(350); compose.waitForIdle(); capture("approved-$name.png") }
+        navigate("事件")
+        compose.waitUntil(10000) { compose.onAllNodesWithText("人出现").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("人出现").performClick(); shot("event-detail")
+        compose.onNodeWithTag("option-event-save").performClick(); shot("media-save")
+        compose.onNodeWithTag("page-back").performClick(); compose.onNodeWithTag("event-detail-back").performClick()
+        navigate("回放"); compose.onNodeWithTag("choice-通道").performClick(); shot("channel-filter")
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        fixture.recordingRows = JSONArray()
+        compose.waitUntil(12000) { compose.onAllNodesWithText("暂无录像").fetchSemanticsNodes().isNotEmpty() }; shot("no-recordings")
+        fixture.noEvents = true; navigate("事件")
+        compose.waitUntil(12000) { compose.onAllNodesWithText("暂无事件").fetchSemanticsNodes().isNotEmpty() }; shot("no-events")
+        navigate("实时"); openChannel(2); shot("no-signal"); compose.onNodeWithTag("channel-detail-back").performClick()
+        fixture.unavailable = true
+        compose.waitUntil(15000) { compose.onAllNodesWithTag("connection-status").fetchSemanticsNodes().isNotEmpty() }; shot("offline")
+        fixture.unavailable = false; connected()
+        navigate("设置"); compose.onNodeWithTag("settings-category-storage").performScrollTo().performClick()
+        compose.waitUntil(10000) { fixture.requests.any { it.contains("/api/storage/targets") } }
+        compose.onNodeWithTag("option-choice-保存介质").performClick(); shot("storage-picker")
+        InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+        fixture.storageLost = true
+        compose.onNodeWithText("刷新可用介质").performScrollTo().performClick()
+        compose.waitUntil(10000) { compose.onAllNodesWithText("内置存储（不可用）", substring = true).fetchSemanticsNodes().isNotEmpty() }; shot("storage-lost")
+        fixture.modelError = true; navigate("设置"); compose.onNodeWithTag("settings-category-model").performClick()
+        compose.waitUntil(10000) { compose.onAllNodesWithText("模型库不可用", substring = true).fetchSemanticsNodes().isNotEmpty() }; shot("model-error")
+        fixture.modelError = false
+        navigate("设置"); compose.onNodeWithTag("settings-category-connection").performClick()
+        compose.onNodeWithTag("endpoint-input").performTextReplacement("http://"); hideKeyboard(); compose.onNodeWithText("连接设备").performClick(); shot("invalid-address")
+        navigate("实时"); openChannelSettings(1)
+        compose.onNodeWithTag("setting-通道名称").performTextReplacement("未保存的测试名称"); hideKeyboard()
+        backSetting(); backSetting(); shot("unsaved"); compose.onNodeWithText("继续编辑").performClick()
+        fixture.nextPutFailureGate = CountDownLatch(0)
+        compose.onNodeWithTag("save-config").performClick()
+        compose.waitUntil(10000) { compose.onAllNodesWithText("测试一号通道保存失败").fetchSemanticsNodes().isNotEmpty() }; shot("save-failed")
+        assertTrue(fixture.savedConfigs.isEmpty())
     }
 
     private fun connected() = compose.waitUntil(15_000) {
@@ -464,6 +588,9 @@ class RecorderUiTest {
 
     private fun hideKeyboard() {
         scenario.onActivity { activity ->
+            activity.currentFocus?.clearFocus()
+            (activity.getSystemService(Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager)
+                .hideSoftInputFromWindow(activity.window.decorView.windowToken, 0)
             WindowInsetsControllerCompat(activity.window, activity.window.decorView).hide(WindowInsetsCompat.Type.ime())
         }
         compose.waitUntil(10_000) {
@@ -485,6 +612,12 @@ class RecorderUiTest {
 
     private fun navigate(label: String) {
         val page = mapOf("实时" to "live", "回放" to "recordings", "事件" to "events", "设置" to "settings").getValue(label)
+        repeat(8) {
+            if (compose.onAllNodesWithTag("nav-$page").fetchSemanticsNodes().isNotEmpty()) return@repeat
+            val back = listOf("settings-category-back", "event-detail-back", "channel-settings-back", "channel-detail-back", "page-back")
+                .firstOrNull { compose.onAllNodesWithTag(it).fetchSemanticsNodes().isNotEmpty() }
+            if (back != null) compose.onNodeWithTag(back).performClick()
+        }
         compose.onNodeWithTag("nav-$page").performClick()
     }
 
@@ -505,7 +638,31 @@ class RecorderUiTest {
     private fun openChannelSettings(id: Int) {
         openChannel(id)
         compose.onNodeWithTag("channel-settings-entry").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("option-basic").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithTag("option-basic").performClick()
         waitForConfig()
+    }
+
+    private fun backSetting() {
+        hideKeyboard()
+        compose.onNodeWithTag("channel-settings-back").performClick()
+    }
+
+    private fun openDwellFromBasic() {
+        backSetting()
+        compose.onNodeWithTag("option-detection").performScrollTo().performClick()
+        compose.onNodeWithTag("option-dwell").performScrollTo().performClick()
+    }
+
+    private fun basicFromDwell() {
+        backSetting(); backSetting()
+        compose.onNodeWithTag("option-basic").performScrollTo().performClick()
+    }
+
+    private fun leaveChannelSettings() {
+        backSetting(); backSetting()
+        if (compose.onAllNodesWithText("保留草稿并返回").fetchSemanticsNodes().isNotEmpty())
+            compose.onNodeWithText("保留草稿并返回").performClick()
     }
 
     private fun rotate() {
@@ -521,14 +678,19 @@ private class BoardFixture(firstChannelName: String = "AHD1") : Dispatcher() {
     val requests = ConcurrentLinkedQueue<String>()
     val savedConfigs = ConcurrentLinkedQueue<JSONObject>()
     @Volatile var unavailable = false
+    @Volatile var noEvents = false
+    @Volatile var modelError = false
+    @Volatile var storageLost = false
     @Volatile var putResponseDelayMillis = 0L
     @Volatile var nextPutFailureGate: CountDownLatch? = null
     @Volatile var recordingRows: JSONArray? = null
     private val lock = Any()
     private var settings = config().apply { getJSONArray("channels").getJSONObject(0).put("name", firstChannelName) }
     private val jpeg: ByteArray = ByteArrayOutputStream().use { output ->
-        val bitmap = Bitmap.createBitmap(320, 180, Bitmap.Config.RGB_565)
-        bitmap.eraseColor(Color.rgb(58, 125, 183))
+        // 测试素材只含桌面与线材，截图不得使用现场人脸画面。
+        val original = InstrumentationRegistry.getInstrumentation().context.assets.open("safe-camera.jpg").use { android.graphics.BitmapFactory.decodeStream(it) }
+        val bitmap = Bitmap.createScaledBitmap(original, 320, 180, true)
+        if (original !== bitmap) original.recycle()
         bitmap.compress(Bitmap.CompressFormat.JPEG, 75, output)
         bitmap.recycle()
         output.toByteArray()
@@ -538,6 +700,7 @@ private class BoardFixture(firstChannelName: String = "AHD1") : Dispatcher() {
         requests.add("${request.method} ${request.path}")
         if (unavailable) return json(JSONObject().put("error", "测试服务暂时不可用"), 503)
         val url = request.requestUrl ?: return json(JSONObject(), 400)
+        if (modelError && url.encodedPath == "/api/diagnostics/model") return json(JSONObject().put("error", "模型库不可用"), 503)
         if (url.encodedPath == "/api/config" && request.method == "PUT") {
             nextPutFailureGate?.let { gate ->
                 nextPutFailureGate = null
@@ -567,7 +730,7 @@ private class BoardFixture(firstChannelName: String = "AHD1") : Dispatcher() {
                 val rows = JSONArray()
                 listOf("person", "vehicle", "animal", "dwell").forEachIndexed { index, type ->
                     val channel = if (type == "vehicle") 2 else 1
-                    if ((wantedType == null || type == wantedType) && (wantedChannel == null || channel == wantedChannel)) rows.put(
+                    if (!noEvents && (wantedType == null || type == wantedType) && (wantedChannel == null || channel == wantedChannel)) rows.put(
                         JSONObject().put("id", "event-$type").put("channel_id", channel).put("event_type", type)
                             .put("category", if (type == "dwell") "person" else type).put("label", type)
                             .put("dwell_seconds", if (type == "dwell") 12 else 0).put("snapshot_url", "/media/test-$index.jpg")
@@ -576,8 +739,9 @@ private class BoardFixture(firstChannelName: String = "AHD1") : Dispatcher() {
                 json(JSONObject().put("items", rows))
             }
             "/api/storage/targets" -> json(JSONObject().put("selected_id", "internal").put("targets", JSONArray().put(
-                JSONObject().put("id", "internal").put("label", "内置存储").put("available", true).put("writable", true)
+                JSONObject().put("id", "internal").put("label", "内置存储").put("available", !storageLost).put("writable", !storageLost)
                     .put("free_bytes", 40_000_000_000L).put("total_bytes", 54_000_000_000L).put("error", ""))))
+            "/api/logs" -> json(JSONObject().put("items", JSONArray().put(JSONObject().put("name", "recorder.log").put("size_bytes", 1024))))
             "/api/diagnostics/model" -> json(JSONObject().put("name", "YOLOv5s ReLU").put("version", "YOLOv5")
                 .put("tracker", "ByteTrack").put("backend_label", "RKNN NPU").put("npu", JSONObject().put("used", true))
                 .put("vpu", JSONObject().put("used", true)).put("sdk_version", "1.7.5"))

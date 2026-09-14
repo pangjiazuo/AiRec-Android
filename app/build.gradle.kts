@@ -12,12 +12,12 @@ android {
         applicationId = "com.neardi.recorder"
         minSdk = 31
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.4.0"
+        versionCode = 7
+        versionName = "1.5.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

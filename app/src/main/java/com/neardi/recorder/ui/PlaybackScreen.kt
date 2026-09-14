@@ -124,7 +124,7 @@ fun PlaybackScreen(url: String, title: String, active: Boolean, initialPositionM
             Box(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 8.dp), contentAlignment = Alignment.Center) {
                 IconButton(onClick = onClose, modifier = Modifier.align(Alignment.CenterStart).testTag("playback-close")
                     .semantics { contentDescription = "关闭" }) { RecorderGlyph("back", color = foreground) }
-                Text("录像回放", Modifier.padding(horizontal = 80.dp), color = foreground, style = MaterialTheme.typography.titleMedium,
+                Text("录像播放", Modifier.padding(horizontal = 80.dp), color = foreground, style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold, maxLines = 1)
                 if (fullscreen) TextButton(onClick = { onFullscreenChange(false) }, modifier = Modifier.align(Alignment.CenterEnd)) { Text("退出全屏", color = Color.White) }
             }
@@ -142,54 +142,23 @@ fun PlaybackScreen(url: String, title: String, active: Boolean, initialPositionM
                     }
                 }
                 Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 18.dp),
-                    verticalArrangement = Arrangement.spacedBy(18.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    val absoluteMs = recordedAtEpochMs?.let { start -> runCatching { Math.addExact(start, position) }.getOrNull() }
-                    val currentTime = absoluteMs?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()) }
-                    Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surface) {
-                        Text(currentTime?.format(DateTimeFormatter.ofPattern("M月d日  E", Locale.CHINESE)) ?: "录像片段",
-                            Modifier.padding(horizontal = 18.dp, vertical = 9.dp), color = RecorderInk, style = MaterialTheme.typography.titleSmall)
-                    }
-                    Text(currentTime?.format(DateTimeFormatter.ofPattern("HH:mm:ss")) ?: playbackTime(position),
-                        color = RecorderBlue, style = MaterialTheme.typography.titleMedium, modifier = Modifier.testTag("playback-time"))
-                    PlaybackTimeline(position, duration, ready, onSeek = ::seek)
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(onClick = { seek(player.currentPosition.coerceAtLeast(0) - 15_000) }, enabled = ready,
-                            modifier = Modifier.size(58.dp).testTag("playback-seek-back").semantics { contentDescription = "后退15秒" },
-                            colors = IconButtonDefaults.iconButtonColors(contentColor = RecorderInk)) {
-                            SkipGlyph("rewind")
-                        }
-                        FilledIconButton(onClick = {
-                            if (ended) { seek(0); shouldPlay = true } else shouldPlay = !shouldPlay
-                            player.playWhenReady = active && shouldPlay
-                        }, modifier = Modifier.size(60.dp).testTag("playback-toggle")
-                            .semantics { contentDescription = if (shouldPlay && !ended) "暂停录像" else "播放录像" },
-                            shape = CircleShape, colors = IconButtonDefaults.filledIconButtonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = RecorderInk)) {
-                            PlaybackToggleGlyph(shouldPlay && !ended)
-                        }
-                        IconButton(onClick = { seek(player.currentPosition.coerceAtLeast(0) + 15_000) }, enabled = ready,
-                            modifier = Modifier.size(58.dp).testTag("playback-seek-forward").semantics { contentDescription = "前进15秒" },
-                            colors = IconButtonDefaults.iconButtonColors(contentColor = RecorderInk)) {
-                            SkipGlyph("forward")
-                        }
+                    verticalArrangement = Arrangement.spacedBy(12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = { if (ended) seek(0); shouldPlay = !shouldPlay; player.playWhenReady = active && shouldPlay },
+                            modifier = Modifier.size(40.dp).testTag("playback-toggle").semantics { contentDescription = if (shouldPlay && !ended) "暂停录像" else "播放录像" }) { PlaybackToggleGlyph(shouldPlay && !ended) }
+                        Box(Modifier.weight(1f)) { PlaybackTimeline(position, duration, ready, onSeek = ::seek) }
+                        IconButton(onClick = { onFullscreenChange(true) }, modifier = Modifier.size(40.dp).testTag("playback-expand")) { RecorderGlyph("expand", Modifier.size(20.dp)) }
                     }
                     error?.let { MessageCard(it) }
-                    if (!ready && error == null) Text("正在载入录像…", color = RecorderMuted, style = MaterialTheme.typography.bodySmall)
-                    Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface) {
-                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("录制片段", color = RecorderInk, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
-                                Text(format, color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
-                            }
-                            HorizontalDivider(color = RecorderLine, thickness = .5.dp)
-                            Text(title, color = RecorderInk, style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                                Text(if (duration > 0) "时长 ${playbackTime(duration)}" else "MP4", color = RecorderMuted, style = MaterialTheme.typography.labelMedium)
-                                onDownload?.let { download -> TextButton(onClick = download, modifier = Modifier.testTag("playback-download")) {
-                                    RecorderGlyph("download", modifier = Modifier.size(19.dp)); Spacer(Modifier.width(6.dp)); Text("下载录像")
-                                } }
-                            }
-                        }
+                    if (!ready && error == null) Hint("正在载入录像…")
+                    GroupedRows {
+                        ReadOnlyRow("通道", title.substringBefore(" · "))
+                        ReadOnlyRow("开始时间", recordedAtEpochMs?.let { Instant.ofEpochMilli(it).atZone(ZoneId.systemDefault()).format(DateTimeFormatter.ofPattern("MM月dd日 HH:mm:ss")) } ?: "—")
+                        ReadOnlyRow("时长", if (duration > 0) playbackTime(duration) else "—")
+                        ReadOnlyRow("编码格式", format)
                     }
+                    onDownload?.let { download -> GroupedRows { OptionRow("保存录像到手机", route = "video-download", onRoute = { download() }) } }
+
                 }
             }) { children, constraints ->
                 val width = constraints.maxWidth
@@ -222,12 +191,6 @@ fun PlaybackScreen(url: String, title: String, active: Boolean, initialPositionM
     val lineColor = RecorderLine
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(0.dp)) {
         Box(Modifier.fillMaxWidth().height(40.dp)) {
-            Canvas(Modifier.fillMaxSize().padding(horizontal = 10.dp)) {
-                for (tick in 0..40) {
-                    val x = size.width * tick / 40
-                    drawLine(lineColor, Offset(x, if (tick % 5 == 0) 5.dp.toPx() else 10.dp.toPx()), Offset(x, 34.dp.toPx()), 1.dp.toPx())
-                }
-            }
             Slider(value = if (dragging) dragValue else if (duration > 0) (position.toDouble() / duration).toFloat().coerceIn(0f, 1f) else 0f,
                 onValueChange = { dragging = true; dragValue = it },
                 onValueChangeFinished = { onSeek((duration * dragValue).toLong()); dragging = false }, enabled = enabled && duration > 0,

@@ -27,6 +27,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -94,6 +95,7 @@ class MainActivity : ComponentActivity() {
         var mediaFullscreen by rememberSaveable(state.endpoint) { mutableStateOf(false) }
         var pendingDownload by rememberSaveable { mutableStateOf<String?>(null) }
         var pendingVideoDownload by rememberSaveable { mutableStateOf<String?>(null) }
+        var videoSaveTitle by rememberSaveable { mutableStateOf<String?>(null) }
         // 全屏/回放临时移走页面时，仍保留筛选与未提交的设置草稿。
         val stateHolder = rememberSaveableStateHolder()
         val launcher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
@@ -117,7 +119,18 @@ class MainActivity : ComponentActivity() {
                 pendingVideoDownload = url
                 val safeTitle = title.replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "-").take(90)
                 val filename = safeTitle.ifBlank { "smart-recorder" }
-                videoLauncher.launch(if (filename.endsWith(".mp4", ignoreCase = true)) filename else "$filename.mp4")
+                videoSaveTitle = if (filename.endsWith(".mp4", ignoreCase = true)) filename else "$filename.mp4"
+            }
+        }
+        var orientationLocked by rememberSaveable { mutableStateOf(false) }
+        var previousOrientation by rememberSaveable { mutableIntStateOf(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED) }
+        val landscapePlayer = fullscreen != 0 || (mediaUrl != null && mediaKind == "video" && mediaFullscreen)
+        LaunchedEffect(landscapePlayer) {
+            if (landscapePlayer) {
+                if (!orientationLocked) { previousOrientation = requestedOrientation; orientationLocked = true }
+                requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
+            } else if (orientationLocked) {
+                orientationLocked = false; requestedOrientation = previousOrientation
             }
         }
         val immersive = fullscreen != 0 || (mediaUrl != null && (mediaKind == "image" || mediaFullscreen))
@@ -150,6 +163,27 @@ class MainActivity : ComponentActivity() {
             mediaKind = "video"; mediaTitle = title; mediaUrl = url
         }
         val openImage: (String, String) -> Unit = { url, title -> mediaKind = "image"; mediaTitle = title; mediaUrl = url }
+        val retryLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
+            if (uri != null) downloads.download(download.url, uri, download.label, download.maximum)
+        }
+        if (download.message != null) {
+            BackHandler { if (download.busy) downloads.cancel() else downloads.clearMessage() }
+            RecorderNavigationFrame(page, onNavigate = {}, showNavigation = false) {
+                DownloadScreen(download, onClose = { if (download.busy) downloads.cancel() else downloads.clearMessage() },
+                    onRetry = { retryLauncher.launch(if (download.label == "录像") "AiRec.mp4" else if (download.label == "截图") "AiRec.jpg" else "AiRec-logs.zip") })
+            }
+            return
+        }
+        if (videoSaveTitle != null) {
+            val close = { videoSaveTitle = null; pendingVideoDownload = null }
+            BackHandler { close() }
+            RecorderNavigationFrame(page, onNavigate = {}, showNavigation = false) {
+                MediaSaveScreen("录像", videoSaveTitle!!, close) {
+                    val name = videoSaveTitle!!; videoSaveTitle = null; videoLauncher.launch(name)
+                }
+            }
+            return
+        }
         if (mediaUrl != null) {
             if (mediaKind == "video") RecorderNavigationFrame(page, onNavigate = {
                 mediaUrl = null; mediaFullscreen = false; detailChannel = 0; channelSettings = false; page = it
@@ -174,17 +208,23 @@ class MainActivity : ComponentActivity() {
         }
         if (fullscreen != 0) {
             val channel = state.status?.optJSONArray("channels").objects().firstOrNull { it.optInt("id") == fullscreen }
+            var paused by rememberSaveable(fullscreen) { mutableStateOf(false) }
             Box(Modifier.fillMaxSize().background(Color.Black)) {
-                CameraFrame(recorder.api, channel, fullscreen, state.connected, active, Modifier.fillMaxSize())
-                Row(Modifier.fillMaxWidth().safeDrawingPadding().padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Surface(color = Color(0xB311151D), shape = MaterialTheme.shapes.medium) {
-                        Text(channel?.optString("name") ?: "AHD$fullscreen", Modifier.padding(12.dp), color = Color.White)
-                    }
-                    FilledTonalButton(onClick = { fullscreen = 0 }) { Text("退出全屏") }
+                CameraFrame(recorder.api, channel, fullscreen, state.connected, active && !paused, Modifier.fillMaxSize())
+                Row(Modifier.fillMaxWidth().background(Color(0x6620252C)).safeDrawingPadding().padding(horizontal = 16.dp).height(62.dp), verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { fullscreen = 0 }, modifier = Modifier.semantics { contentDescription = "退出全屏" }) { RecorderGlyph("back", color = Color.White) }
+                    Text(channel?.optString("name") ?: "AHD$fullscreen", Modifier.weight(1f).padding(start = 12.dp), color = Color.White)
+                    Text("实时", color = Color.White)
+                }
+                Row(Modifier.align(Alignment.BottomCenter).fillMaxWidth().background(Color(0x6620252C)).safeDrawingPadding().padding(horizontal = 16.dp).height(62.dp), verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = { paused = !paused }) { Text(if (paused) "▷" else "Ⅱ", color = Color.White) }
+                    Text(channel?.optInt("height", 720)?.let { "${it}p" } ?: "720p", Modifier.weight(1f).padding(start = 12.dp), color = Color.White)
+                    IconButton(onClick = { fullscreen = 0 }, modifier = Modifier.semantics { contentDescription = "退出全屏播放" }) { RecorderGlyph("expand", color = Color.White) }
                 }
             }
             return
         }
+
         if (detailChannel in 1..5) {
             val channel = state.status?.optJSONArray("channels").objects().firstOrNull { it.optInt("id") == detailChannel }
                 ?: state.config?.optJSONArray("channels").objects().firstOrNull { it.optInt("id") == detailChannel }
@@ -208,9 +248,11 @@ class MainActivity : ComponentActivity() {
             }
             return
         }
-        RecorderNavigationFrame(page, onNavigate = { page = it }, modifier = Modifier.imePadding()) {
+        var nestedPage by remember { mutableStateOf(false) }
+        CompositionLocalProvider(LocalRecorderNavigationVisibility provides { visible -> nestedPage = !visible }) {
+        RecorderNavigationFrame(page, onNavigate = { nestedPage = false; page = it }, modifier = Modifier.imePadding(), showNavigation = !nestedPage) {
             Column(Modifier.fillMaxSize()) {
-                if (!state.connected) MessageCard(state.error?.let { "$it · 自动重连中，可在设置中修改地址" } ?: "正在连接开发板…",
+                if (!state.connected && page != 0) MessageCard(if (state.error != null) "暂时无法连接录像机，正在自动重连。可在设置中检查地址。" else "正在连接录像机…",
                     Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("connection-status")
                         .semantics { stateDescription = "连接中" })
                 if (download.message != null) Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -220,7 +262,7 @@ class MainActivity : ComponentActivity() {
                 Box(Modifier.weight(1f)) {
                     key(state.endpoint) { stateHolder.SaveableStateProvider("${state.endpoint}:$page") {
                         when (page) {
-                            0 -> LiveScreen(recorder.api, state.status, state.connected, active) {
+                            0 -> LiveScreen(recorder.api, state.status, state.connected, active, onRetry = { recorder.stop(); recorder.start() }, onSettings = { page = 3 }) {
                                 detailChannel = it
                                 channelSettings = false
                             }
@@ -234,6 +276,7 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+        }
     }
 }
 
@@ -242,29 +285,28 @@ class MainActivity : ComponentActivity() {
     modifier: Modifier = Modifier, showNavigation: Boolean = true, content: @Composable () -> Unit) {
     val titles = listOf("实时", "回放", "事件", "设置")
     val tags = listOf("nav-live", "nav-recordings", "nav-events", "nav-settings")
-    Box(modifier.fillMaxSize().background(RecorderBackground).safeDrawingPadding()) {
-        Box(Modifier.fillMaxSize().padding(bottom = if (showNavigation) 96.dp else 0.dp)) {
+    Box(modifier.fillMaxSize().background(RecorderBackground).safeDrawingPadding().padding(top = 8.dp)) {
+        Box(Modifier.fillMaxSize().padding(bottom = if (showNavigation) 60.dp else 0.dp)) {
             CompositionLocalProvider(LocalRecorderContentBottomInset provides 0.dp) {
                 content()
             }
         }
         if (showNavigation) Surface(
-            modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 12.dp)
-                .widthIn(max = 560.dp).fillMaxWidth().testTag("floating-navigation"),
-            shape = RoundedCornerShape(50),
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().testTag("floating-navigation"),
+            shape = RoundedCornerShape(0.dp),
             color = MaterialTheme.colorScheme.surface.copy(alpha = .96f),
             contentColor = RecorderInk,
-            shadowElevation = 6.dp,
+            shadowElevation = 0.dp,
             border = BorderStroke(.75.dp, MaterialTheme.colorScheme.surface.copy(alpha = .72f))
         ) {
             NavigationBar(containerColor = Color.Transparent, windowInsets = WindowInsets(0),
-                tonalElevation = 0.dp, modifier = Modifier.heightIn(min = 80.dp)) {
+                tonalElevation = 0.dp, modifier = Modifier.height(60.dp)) {
                 titles.forEachIndexed { index, label ->
                     NavigationBarItem(selected = page == index, onClick = { onNavigate(index) },
                         modifier = Modifier.testTag(tags[index]),
                         colors = NavigationBarItemDefaults.colors(indicatorColor = Color.Transparent,
                             selectedIconColor = RecorderBlue, selectedTextColor = RecorderBlue,
-                            unselectedIconColor = RecorderInk, unselectedTextColor = RecorderInk),
+                            unselectedIconColor = RecorderMuted, unselectedTextColor = RecorderMuted),
                         icon = { NavigationGlyph(index, page == index) }, label = {
                             Text(label, style = MaterialTheme.typography.labelMedium,
                                 fontWeight = if (page == index) FontWeight.SemiBold else FontWeight.Medium)

@@ -43,82 +43,70 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import kotlin.math.min
 
-@Composable fun LiveScreen(api: RecorderApi, status: JSONObject?, connected: Boolean, active: Boolean, onChannelSelected: (Int) -> Unit) {
+@Composable fun LiveScreen(api: RecorderApi, status: JSONObject?, connected: Boolean, active: Boolean, onRetry: () -> Unit = {}, onSettings: () -> Unit = {}, onChannelSelected: (Int) -> Unit) {
     val channels = status?.optJSONArray("channels").objects().associateBy { it.optInt("id") }
     var showDevice by rememberSaveable { mutableStateOf(false) }
-    val onlineCount = if (connected) channels.values.count { it.optString("state") == "online" } else 0
-    val recordingCount = if (connected) channels.values.count { it.optString("state") == "online" && it.optBoolean("recording") } else 0
-    BoxWithConstraints(Modifier.fillMaxSize()) {
-        // 方案 B：手机双列、宽屏三列，五路画面具有相同权重。
-        val columns = if (maxWidth >= 840.dp) 3 else if (androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f) 1 else 2
-        LazyVerticalGrid(columns = GridCells.Fixed(columns), modifier = Modifier.fillMaxSize().testTag("live-grid"),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 24.dp + LocalRecorderContentBottomInset.current),
-            horizontalArrangement = Arrangement.spacedBy(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            item(span = { GridItemSpan(maxLineSpan) }) { LiveHeading(status, connected, onlineCount) { showDevice = true } }
-            items((1..5).toList(), key = { it }) { id ->
-                CameraCard(api, channels[id], id, connected, active, Modifier, onChannelSelected)
+    NestedNavigation(showDevice)
+    androidx.activity.compose.BackHandler(showDevice) { showDevice = false }
+    if (showDevice) { PhonePage("设备信息", { showDevice = false }) { DeviceInformation(status, connected, api.baseUrl) }; return }
+    if (!connected) {
+        PhonePage("实时") {
+            MessageCard("连接已断开，正在自动重连…", Modifier.testTag("connection-status"))
+            Column(Modifier.fillMaxWidth().heightIn(min = 270.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                RecorderGlyph("camera-off", Modifier.size(42.dp), RecorderMuted)
+                Text("暂时无法连接录像机", Modifier.padding(top = 18.dp), style = MaterialTheme.typography.titleMedium)
+                Text("检查手机网络和录像机电源。", Modifier.padding(top = 12.dp), color = RecorderMuted, style = MaterialTheme.typography.bodySmall)
             }
-            item {
-                Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
-                    Column {
-                        Column(Modifier.fillMaxWidth().aspectRatio(16f / 9f).padding(12.dp),
-                            verticalArrangement = Arrangement.SpaceEvenly) {
-                            listOf("通道总数" to 5, "在线通道" to onlineCount, "正在录像" to recordingCount).forEach { (label, value) ->
-                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically) {
-                                    Text(label, color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
-                                    Text(value.toString(), color = RecorderInk, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
-                                }
-                            }
-                        }
-                        Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 14.dp, vertical = 12.dp),
-                            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Box(Modifier.size(6.dp).background(if (connected) RecorderGreen else RecorderMuted, CircleShape))
-                            Text(if (connected) "设备已连接" else "正在重连", color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
-                        }
-                    }
-                }
+            GroupedRows {
+                Column(Modifier.padding(vertical = 16.dp)) { Text("当前地址"); Text(api.baseUrl, color = RecorderMuted, style = MaterialTheme.typography.bodySmall) }
+                OptionRow("修改连接地址", route = "connection", onRoute = { onSettings() })
+            }
+            Button(onClick = onRetry, modifier = Modifier.fillMaxWidth().heightIn(min = 46.dp), shape = RoundedCornerShape(10.dp)) { Text("立即重试") }
+        }
+        return
+    }
+    val onlineCount = if (connected) channels.values.count { it.optString("state") == "online" } else 0
+    val largeText = androidx.compose.ui.platform.LocalDensity.current.fontScale >= 1.5f
+    LazyVerticalGrid(columns = GridCells.Fixed(if (largeText) 1 else 2),
+        modifier = Modifier.fillMaxSize().testTag("live-grid"),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 16.dp), horizontalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            Box(Modifier.fillMaxWidth().height(62.dp), contentAlignment = Alignment.Center) {
+                Text("实时", style = MaterialTheme.typography.titleLarge)
+            }
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) { LiveHeading(status, connected, onlineCount) { showDevice = true } }
+        items((1..5).toList(), key = { it }, span = { GridItemSpan(if (it == 1) maxLineSpan else 1) }) { id ->
+            CameraCard(api, channels[id], id, connected, active, Modifier, onChannelSelected)
+        }
+        item(span = { GridItemSpan(maxLineSpan) }) {
+            val system = if (connected) status?.optJSONObject("system") else null
+            val storage = if (connected) status?.optJSONObject("storage") else null
+            Row(Modifier.fillMaxWidth().clickable { showDevice = true }.heightIn(min = 48.dp),
+                horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text(system.metric("temperature_c", "°C"), color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
+                Text("内存 " + system?.optJSONObject("memory").metric("used_percent", "%"), color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
+                Text("剩余 " + bytesText(storage?.optDouble("free_bytes", Double.NaN) ?: Double.NaN), color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
+                RecorderGlyph("chevron", Modifier.size(14.dp), RecorderMuted)
             }
         }
     }
-    if (showDevice) AlertDialog(onDismissRequest = { showDevice = false }, title = { Text("设备信息") },
-        text = { DevicePanel(status, connected) },
-        confirmButton = { TextButton(onClick = { showDevice = false }) { Text("完成") } })
+
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable private fun LiveHeading(status: JSONObject?, connected: Boolean, onlineCount: Int, onDevice: () -> Unit) {
-    val system = if (connected) status?.optJSONObject("system") else null
-    val memory = system?.optJSONObject("memory")
-    val storage = if (connected) status?.optJSONObject("storage") else null
-    val total = storage?.optDouble("total_bytes", Double.NaN) ?: Double.NaN
-    val free = storage?.optDouble("free_bytes", Double.NaN) ?: Double.NaN
-    val used = if (total > 0 && free.isFinite()) "%.0f%%".format(((total - free) / total * 100).coerceIn(0.0,100.0)) else "—"
-    Column(Modifier.padding(bottom = 6.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("录像机", style = MaterialTheme.typography.headlineMedium, color = RecorderInk)
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("$onlineCount / 5 路在线", color = RecorderMuted, style = MaterialTheme.typography.bodyMedium)
-            TextButton(onClick = onDevice, contentPadding = PaddingValues(horizontal = 8.dp)) {
-                Text("设备信息")
-                Spacer(Modifier.width(6.dp))
-                RecorderGlyph("info", Modifier.size(18.dp), RecorderBlue)
+    Surface(onClick = onDevice, modifier = Modifier.fillMaxWidth().testTag("device-info-entry"),
+        shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(13.dp)) {
+            Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surfaceVariant) { RecorderGlyph("server", Modifier.padding(8.dp).size(26.dp), RecorderInk) }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                Text("家中录像机", style = MaterialTheme.typography.titleMedium)
+                Text(if (connected) "已连接 · $onlineCount / 5 路在线" else "正在自动重连", color = RecorderMuted, style = MaterialTheme.typography.bodySmall)
             }
-        }
-        Surface(onClick = onDevice, modifier = Modifier.fillMaxWidth().testTag("device-info-entry"),
-            shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(22.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    listOf("温度" to system.metric("temperature_c", "°C"), "CPU" to system.metric("cpu_percent", "%"),
-                        "存储已用" to used).forEach { (label, value) ->
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(label, color = RecorderMuted, style = MaterialTheme.typography.bodySmall)
-                            Text(value, color = RecorderInk, style = MaterialTheme.typography.titleMedium)
-                        }
-                    }
-                }
-                Text("内存 ${bytesText(memory?.optDouble("used_bytes", Double.NaN) ?: Double.NaN)} / ${bytesText(memory?.optDouble("total_bytes", Double.NaN) ?: Double.NaN)}",
-                    color = RecorderMuted, style = MaterialTheme.typography.bodySmall)
-            }
+            RecorderGlyph("chevron", Modifier.size(17.dp), RecorderMuted)
         }
     }
 }
@@ -126,19 +114,20 @@ import kotlin.math.min
 @Composable private fun CameraCard(api: RecorderApi, channel: JSONObject?, id: Int, connected: Boolean, active: Boolean,
                                   modifier: Modifier, onSelect: (Int) -> Unit) {
     val online = connected && channel?.optString("state") == "online"
-    Surface(modifier, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
-        Column {
+    Surface(modifier, shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surface) {
+        Box {
             CameraFrame(api, channel, id, connected, active, Modifier.fillMaxWidth().aspectRatio(16f / 9f)
                 .clickable { onSelect(id) }.testTag("camera-$id"))
-            Row(Modifier.fillMaxWidth().clickable { onSelect(id) }.heightIn(min = 52.dp)
-                .padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Box(Modifier.size(6.dp).background(if (online) RecorderGreen else RecorderMuted, CircleShape))
-                Text(channel?.optString("name", "AHD$id")?.takeIf(String::isNotBlank) ?: "AHD$id", Modifier.weight(1f),
-                    color = RecorderInk, style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (online && channel?.optBoolean("recording") == true) Text("REC", color = Color(0xFFFF6659),
-                    style = MaterialTheme.typography.labelSmall)
+            Row(Modifier.fillMaxWidth().padding(9.dp), verticalAlignment = Alignment.CenterVertically) {
+                Surface(color = if (online) Color(0x77000000) else Color.Transparent, shape = RoundedCornerShape(4.dp)) {
+                    Text(channel?.optString("name")?.takeIf(String::isNotBlank) ?: "AHD$id",
+                        Modifier.padding(horizontal = 4.dp, vertical = 2.dp), color = if (online) Color.White else RecorderMuted,
+                        style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
+                Spacer(Modifier.weight(1f))
+                if (online && channel?.optBoolean("recording") == true) Surface(color = Color(0x88000000), shape = RoundedCornerShape(4.dp)) {
+                    Text("● 录像中", Modifier.padding(4.dp), color = Color.White, style = MaterialTheme.typography.labelSmall)
+                }
             }
         }
     }

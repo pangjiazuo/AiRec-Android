@@ -66,7 +66,7 @@ object MediaNetwork {
         decode(source.readByteArray())
     }
 
-    suspend fun download(url: String, output: OutputStream, maximum: Long = 16L * 1024 * 1024): Long = request(url) { response ->
+    suspend fun download(url: String, output: OutputStream, maximum: Long = 16L * 1024 * 1024, onProgress: (Long, Long) -> Unit = { _, _ -> }): Long = request(url) { response ->
         val body = response.body ?: throw IOException("下载内容为空")
         if (body.contentLength() > maximum) throw IOException("下载文件超过大小限制")
         var total = 0L
@@ -79,6 +79,7 @@ object MediaNetwork {
             total += count
             if (total > maximum) throw IOException("下载文件超过大小限制")
             output.write(buffer, 0, count)
+            onProgress(total, body.contentLength())
         }
         output.flush()
         total

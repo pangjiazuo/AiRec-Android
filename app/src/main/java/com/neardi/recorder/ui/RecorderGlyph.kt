@@ -27,6 +27,19 @@ fun RecorderGlyph(name: String, modifier: Modifier = Modifier, color: Color = Lo
         fun line(x1: Float, y1: Float, x2: Float, y2: Float) =
             drawLine(color, p(x1, y1), p(x2, y2), stroke.width, StrokeCap.Round)
         when (name) {
+            "server" -> {
+                drawRoundRect(color, p(3f,3f), Size(18*u,7*u), CornerRadius(2*u), style=stroke)
+                drawRoundRect(color, p(3f,14f), Size(18*u,7*u), CornerRadius(2*u), style=stroke)
+                drawCircle(color,u,p(7f,6.5f)); drawCircle(color,u,p(7f,17.5f))
+            }
+            "file" -> {
+                val page=Path().apply { moveTo(5*u,2*u); lineTo(14*u,2*u); lineTo(20*u,8*u); lineTo(20*u,22*u); lineTo(5*u,22*u); close() }
+                drawPath(page,color,style=stroke); line(14f,2f,14f,8f); line(14f,8f,20f,8f); line(9f,13f,16f,13f); line(9f,17f,14f,17f)
+            }
+            "moon" -> {
+                val moon=Path().apply { moveTo(16*u,3*u); cubicTo(1*u,-1*u,0*u,22*u,15*u,21*u); cubicTo(19*u,21*u,22*u,18*u,22*u,16*u); cubicTo(11*u,19*u,10*u,8*u,16*u,3*u) }
+                drawPath(moon,color,style=stroke)
+            }
             "back" -> { line(15f, 4f, 7f, 12f); line(7f, 12f, 15f, 20f) }
             "chevron" -> { line(9f, 6f, 15f, 12f); line(15f, 12f, 9f, 18f) }
             "expand" -> {
@@ -42,18 +55,13 @@ fun RecorderGlyph(name: String, modifier: Modifier = Modifier, color: Color = Lo
                 if (name == "camera-off") line(2f, 2f, 22f, 22f)
             }
             "playback" -> {
-                drawRoundRect(color, p(2f,4f), Size(20*u,16*u), CornerRadius(3*u), style=stroke)
+                drawCircle(color,9*u,p(12f,12f),style=stroke)
                 val play=Path().apply { moveTo(10*u,8*u); lineTo(16*u,12*u); lineTo(10*u,16*u); close() }
-                drawPath(play,color)
+                drawPath(play,color,style=stroke)
             }
             "event" -> {
-                val bell=Path().apply {
-                    moveTo(5*u,17*u); lineTo(7*u,14*u); lineTo(7*u,9*u)
-                    cubicTo(7*u,2*u,17*u,2*u,17*u,9*u)
-                    lineTo(17*u,14*u); lineTo(19*u,17*u); close()
-                }
-                drawPath(bell,color,style=stroke)
-                line(10f,21f,14f,21f); line(12f,2f,12f,3f)
+                val hex=Path().apply { moveTo(8*u,3*u);lineTo(16*u,3*u);lineTo(21*u,12*u);lineTo(16*u,21*u);lineTo(8*u,21*u);lineTo(3*u,12*u);close() }
+                drawPath(hex,color,style=stroke);line(12f,7f,12f,13f);drawCircle(color,.8f*u,p(12f,17f))
             }
             "settings" -> {
                 val gear = Path().apply {
