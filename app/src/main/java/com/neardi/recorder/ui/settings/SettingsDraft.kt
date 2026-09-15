@@ -24,6 +24,9 @@ object SettingsDraft {
             number(channel, "preview_fps", 1.0, channel.getDouble("fps"), prefix + "预览帧率", true)
             val recording = channel.getJSONObject("recording")
             require(recording.optInt("segment_minutes") in listOf(1, 3, 5, 10)) { prefix + "片段长度只能为 1、3、5、10 分钟" }
+            channel.optJSONObject("privacy")?.let { p ->
+                require(p.opt("face_mosaic") is Boolean && p.opt("plate_mosaic") is Boolean) { prefix + "马赛克开关无效" }
+            }
             val detection = channel.getJSONObject("detection")
             val categories = detection.optJSONArray("categories") ?: error(prefix + "缺少识别类别")
             require((0 until categories.length()).all { categories.optString(it) in listOf("person", "vehicle", "animal") }) { prefix + "识别类别无效" }
@@ -57,6 +60,11 @@ object SettingsDraft {
         val channels = (0 until array.length()).map { array.getJSONObject(it) }
         val source = channels.first { it.getInt("id") == sourceId }
         channels.filter { it.getInt("id") in targetIds && it.getInt("id") != sourceId }.forEach { target ->
+            source.optJSONObject("privacy")?.let { p ->
+                val targetPrivacy = target.optJSONObject("privacy") ?: JSONObject()
+                listOf("face_mosaic", "plate_mosaic").forEach { targetPrivacy.put(it, p.getBoolean(it)) }
+                target.put("privacy", targetPrivacy)
+            }
             listOf("width", "height", "fps", "preview_fps").forEach { target.put(it, source.get(it)) }
             mapOf("recording" to listOf("enabled", "segment_minutes"), "detection" to listOf("enabled", "categories", "threshold_seconds", "confidence", "sample_interval", "lost_tolerance_seconds")).forEach { (section, keys) ->
                 val sourceSection = source.getJSONObject(section)

@@ -6,6 +6,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class SettingsDraftTest {
+    @Test fun privacyCopyKeepsOtherChannelsAndUnknownSettings() {
+        val draft = fixture()
+        val channels = draft.getJSONArray("channels")
+        channels.getJSONObject(0).put("privacy", JSONObject("""{"face_mosaic":true,"plate_mosaic":false}"""))
+        channels.getJSONObject(1).put("privacy", JSONObject("""{"face_mosaic":false,"plate_mosaic":true,"future":"keep"}"""))
+        val saved = SettingsDraft.normalize(SettingsDraft.copyChannelParameters(draft, 1, setOf(2)))
+        val p = saved.getJSONArray("channels").getJSONObject(1).getJSONObject("privacy")
+        assertTrue(p.getBoolean("face_mosaic")); assertFalse(p.getBoolean("plate_mosaic"))
+        assertEquals("keep", p.getString("future"))
+        assertFalse(saved.getJSONArray("channels").getJSONObject(2).has("privacy"))
+        assertFalse(channels.getJSONObject(1).getJSONObject("privacy").getBoolean("face_mosaic"))
+    }
     private fun fixture(): JSONObject {
         val channels = JSONArray()
         for (id in 1..5) channels.put(JSONObject("""{

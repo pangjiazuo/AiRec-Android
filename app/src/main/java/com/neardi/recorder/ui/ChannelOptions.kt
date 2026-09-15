@@ -3,7 +3,7 @@ package com.neardi.recorder.ui
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -78,6 +78,7 @@ internal fun channelParent(route: String) = when (route) {
             Hint("预览帧率不能高于录像目标；实际帧率受输入信号、网络和设备负载影响。")
         }
         "recording" -> {
+            PrivacySwitches(channel, enabled, onEdit)
             SettingsGroup { SettingsSwitch("连续录像", rec.optBoolean("enabled"), enabled) { onEdit("recording.enabled", it) } }
             SettingsGroup {
                 ChoiceMenu("片段时长", listOf(1, 3, 5, 10).map { "$it" to "$it 分钟" }, rec.optString("segment_minutes"), asRow = true) {
@@ -165,3 +166,23 @@ internal fun channelParent(route: String) = when (route) {
 }
 
 @Composable internal fun Hint(text: String) { Text(text, color = RecorderMuted, style = MaterialTheme.typography.bodySmall) }
+
+/** 确认后只修改草稿；保存成功才由录像机执行。 */
+@Composable private fun PrivacySwitches(channel: JSONObject, enabled: Boolean, onEdit: (String, Any) -> Unit) {
+    var pending by remember(channel.optInt("id")) { mutableStateOf<String?>(null) }
+    val privacy = channel.optJSONObject("privacy")
+    SettingsGroup {
+        listOf("plate_mosaic" to "开启车牌马赛克", "face_mosaic" to "开启人脸马赛克").forEach { (key, label) ->
+            SettingsSwitch(label, privacy?.optBoolean(key) ?: false, enabled && privacy != null) {
+                if (it) pending = key else onEdit("privacy.$key", false)
+            }
+        }
+        Hint(if (privacy == null) "请先升级录像机主机以支持马赛克。" else "由主机处理，预览、事件截图和新录像均会遮挡。")
+    }
+    pending?.let { key ->
+        AlertDialog(onDismissRequest = { pending = null }, title = { Text("开启马赛克？") },
+            text = { Text("开启后会严重降低性能，可能降低预览与录像帧率。马赛克会永久写入新录像，不能恢复原画面；已有录像不会改变。采用间隔检测与逐帧跟踪，快速新目标可能短暂漏遮挡。") },
+            confirmButton = { TextButton(onClick = { onEdit("privacy.$key", true); pending = null }, enabled = enabled) { Text("仍然开启") } },
+            dismissButton = { TextButton(onClick = { pending = null }) { Text("取消") } })
+    }
+}

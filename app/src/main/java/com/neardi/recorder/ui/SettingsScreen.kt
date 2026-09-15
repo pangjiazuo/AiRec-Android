@@ -359,7 +359,7 @@ internal fun SettingsEditorScreen(viewModel: RecorderViewModel, onDownloadLogs: 
                 }
                 HorizontalDivider(color = RecorderLine)
             }
-            Hint("保留目标通道名称、开关及接线映射；保存后才生效。")
+            Hint("保留目标通道名称、开关及接线映射；保存后才生效。包含马赛克设置，开启后会严重降低性能，并永久写入新录像。")
             Button(onClick = {
                 draftJson = SettingsDraft.copyChannelParameters(JSONObject(draftJson), selectedId, copyTargets).toString()
                 copyDialog = false

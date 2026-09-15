@@ -180,3 +180,15 @@ async function saveDwellThreshold(seconds) {
 - 当前服务用于可信局域网，没有账号认证和 TLS；客户端应按这个部署范围设计。若后续需要公网或多用户访问，需要另行实现认证与传输保护。
 
 </details>
+
+## 马赛克（安卓主机 1.0.4 起）
+
+每路配置新增 `privacy`，两个字段都是布尔值，默认 `false`：
+
+```json
+"privacy": { "face_mosaic": false, "plate_mosaic": false }
+```
+
+通过原有 `GET /api/config` 读取、`PUT /api/config` 保存完整配置。仅合并用户修改的字段。字段不存在时客户端提示升级主机，不能宣称已经启用。
+
+开启前提示“严重降低性能”。主机处理后的图像用于预览、事件截图和新录像，旧录像不变。`/api/status` 的通道中提供 `privacy_ms`（单帧排队和处理时间）与 `privacy_error`（错误原因）。

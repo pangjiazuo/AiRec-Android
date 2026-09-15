@@ -12,8 +12,8 @@ android {
         applicationId = "com.neardi.recorder"
         minSdk = 31
         targetSdk = 36
-        versionCode = 8
-        versionName = "1.0.0"
+        versionCode = 10
+        versionName = "1.0.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
