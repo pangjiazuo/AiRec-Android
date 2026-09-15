@@ -30,6 +30,7 @@ import kotlinx.coroutines.isActive
 @Composable
 fun ChannelArchivePlayer(url: String, initialPosition: Long, endPosition: Long?, active: Boolean,
     scrubbing: Boolean, seekRequestId: Long, modifier: Modifier = Modifier, minimumPosition: Long = 0, playing: Boolean = true, playbackSpeed: Float = 1f,
+    recordingStartMs: Long? = null,
     onEnded: () -> Unit) {
     val context = LocalContext.current
     val range = remember(minimumPosition, endPosition) { ArchivePlaybackRange(minimumPosition, endPosition) }
@@ -91,10 +92,20 @@ fun ChannelArchivePlayer(url: String, initialPosition: Long, endPosition: Long?,
         }
     }
     Box(modifier.background(Color.Black).testTag("channel-archive-player")) {
-        AndroidView(factory = { PlayerView(it).apply { useController = true } }, modifier = Modifier.fillMaxSize(),
+        AndroidView(factory = { PlayerView(it).apply { useController = false } }, modifier = Modifier.fillMaxSize(),
             update = { it.player = if (fullscreen) null else player; it.keepScreenOn = active && playIntent })
-        TextButton(onClick = { fullscreen = true }, modifier = Modifier.align(Alignment.TopEnd).testTag("channel-archive-fullscreen")) {
-            Text("全屏", color = Color.White)
+        recordingStartMs?.let { start ->
+            Text(java.time.Instant.ofEpochMilli(start + position).atZone(java.time.ZoneId.systemDefault())
+                .format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")),
+                Modifier.align(Alignment.TopStart).padding(8.dp).background(Color(0x88000000)).padding(4.dp),
+                color = Color.White, style = MaterialTheme.typography.labelSmall)
+        }
+        Surface(Modifier.align(Alignment.TopEnd).padding(8.dp), color = Color(0x99000000), shape = androidx.compose.foundation.shape.RoundedCornerShape(6.dp)) {
+            Text("回放", Modifier.padding(horizontal = 8.dp, vertical = 5.dp), color = Color.White, style = MaterialTheme.typography.labelSmall)
+        }
+        IconButton(onClick = { fullscreen = true }, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
+            .background(Color(0x99000000), androidx.compose.foundation.shape.RoundedCornerShape(6.dp)).size(36.dp).testTag("channel-archive-fullscreen")) {
+            RecorderGlyph("expand", Modifier.size(20.dp), Color.White)
         }
         if (error != null) Text(error!!, Modifier.align(Alignment.Center).background(Color(0xBB000000)).padding(12.dp),
             color = Color.White, style = MaterialTheme.typography.bodySmall)

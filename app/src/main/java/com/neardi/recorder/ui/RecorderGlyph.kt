@@ -27,6 +27,17 @@ fun RecorderGlyph(name: String, modifier: Modifier = Modifier, color: Color = Lo
         fun line(x1: Float, y1: Float, x2: Float, y2: Float) =
             drawLine(color, p(x1, y1), p(x2, y2), stroke.width, StrokeCap.Round)
         when (name) {
+            "calendar" -> {
+                drawRoundRect(color, p(3f,5f), Size(18*u,16*u), CornerRadius(2*u), style=stroke)
+                line(3f,10f,21f,10f); line(8f,3f,8f,7f); line(16f,3f,16f,7f)
+                drawCircle(color,u,p(8f,14f)); drawCircle(color,u,p(12f,14f)); drawCircle(color,u,p(16f,14f))
+            }
+            "previous-event", "next-event" -> {
+                scale(if (name == "next-event") -1f else 1f, 1f) {
+                    line(5f,5f,5f,19f)
+                    drawPath(Path().apply { moveTo(18*u,5*u); lineTo(7*u,12*u); lineTo(18*u,19*u); close() }, color)
+                }
+            }
             "server" -> {
                 drawRoundRect(color, p(3f,3f), Size(18*u,7*u), CornerRadius(2*u), style=stroke)
                 drawRoundRect(color, p(3f,14f), Size(18*u,7*u), CornerRadius(2*u), style=stroke)

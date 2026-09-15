@@ -33,6 +33,7 @@ import java.time.ZoneId
 import org.json.JSONObject
 
 /** 通道详情只组合预览和历史列表，采集、录像和检测仍由板端独立运行。 */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ChannelDetailScreen(
     api: RecorderApi,
@@ -49,7 +50,9 @@ fun ChannelDetailScreen(
     onDownload: (String, String) -> Unit = { _, _ -> },
 ) {
     require(channelId in 1..5) { "通道编号应为 1～5" }
+    var eventFilter by rememberSaveable(api.baseUrl, channelId) { mutableStateOf("") }
     var playing by rememberSaveable { mutableStateOf(true) }
+    var showSpeed by rememberSaveable { mutableStateOf(false) }
     var speed by rememberSaveable { mutableFloatStateOf(1f) }
     var kind by rememberSaveable(api.baseUrl, channelId) { mutableStateOf("recordings") }
     var dateText by rememberSaveable(api.baseUrl, channelId) { mutableStateOf(LocalDate.now().toString()) }
@@ -85,7 +88,7 @@ fun ChannelDetailScreen(
     val selection = if (archive && directUrl == null) RecordingTimeline.select(index.recordings, channelId, chosenTime) else null
     fun choose(time: Long) {
         seekRequestId++
-        scrubbing = false; archiveStopped = false; directUrl = null; archive = true; chosenTime = time
+        scrubbing = false; archiveStopped = false; directUrl = null; archive = true; chosenTime = time; playing = true
         playbackMessage = if (RecordingTimeline.select(index.recordings, channelId, time) == null) "所选时间没有可用录像" else null
     }
     val embeddedVideo: (String, String) -> Unit = { url, _ ->
@@ -102,7 +105,7 @@ fun ChannelDetailScreen(
         val landscapePreviewHeight = ((maxWidth * .45f - 32.dp) * 9f / 16f)
             .coerceAtMost((maxHeight - 116.dp).coerceAtLeast(96.dp))
         Column(Modifier.fillMaxSize()) {
-            Row(Modifier.fillMaxWidth().heightIn(min = 62.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.fillMaxWidth().heightIn(min = 52.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = onBack, modifier = Modifier.testTag("channel-detail-back").semantics { contentDescription = "返回" }) {
                     RecorderGlyph("back", color = RecorderInk)
                 }
@@ -117,14 +120,23 @@ fun ChannelDetailScreen(
             }
             val historyContent: @Composable () -> Unit = {
                 ChannelHistoryTabs(kind, onChange = { kind = it; scrubbing = false }) {
-                    if (kind == "recordings") Column(Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
+                    if (kind == "recordings") Column(Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
                         DayDateSelector(date) { dateText = it.toString() }
+                        Row(Modifier.fillMaxWidth().height(44.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            listOf("" to "全部", "person" to "人", "vehicle" to "车", "animal" to "动物", "dwell" to "停留").forEach { (value, label) ->
+                                Surface(onClick = { eventFilter = value }, modifier = Modifier.weight(1f).height(32.dp).testTag("timeline-filter-$value"),
+                                    shape = CircleShape, color = if(eventFilter == value) RecorderBlue else MaterialTheme.colorScheme.surfaceContainerHigh,
+                                    contentColor = if(eventFilter == value) MaterialTheme.colorScheme.onPrimary else RecorderInk) {
+                                    Box(contentAlignment = Alignment.Center) { Text(label, style = MaterialTheme.typography.labelMedium) }
+                                }
+                            }
+                        }
                         indexError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
                         if (!loaded && indexError == null) Text("正在加载全天索引…", color = RecorderMuted)
                         Box(Modifier.fillMaxWidth().weight(1f)) {
                             key(api.baseUrl, channelId, dateText) {
                                 VerticalDayTimeline(index, day, zone, loaded && indexError == null, chosenTime,
-                                    onScrubbing = { scrubbing = it }, onSelect = ::choose)
+                                    onScrubbing = { scrubbing = it }, onSelect = ::choose, eventFilter = eventFilter, active = active, archive = archive && selection != null && !archiveStopped)
                             }
                         }
                     } else historyState.SaveableStateProvider("${api.baseUrl}:$channelId:$kind") {
@@ -144,7 +156,8 @@ fun ChannelDetailScreen(
                                 val url = if (archiveStopped) null else directUrl ?: selection?.interval?.url
                                 if (url != null) ChannelArchivePlayer(url, selection?.positionMs ?: 0,
                                     selection?.interval?.let { day.endMs - it.startMs }, active, scrubbing, seekRequestId,
-                                    Modifier.fillMaxSize(), playing = playing, playbackSpeed = speed, minimumPosition = selection?.interval?.let { (day.startMs - it.startMs).coerceAtLeast(0) } ?: 0) {
+                                    Modifier.fillMaxSize(), playing = playing, playbackSpeed = speed, recordingStartMs = selection?.interval?.startMs,
+                                    minimumPosition = selection?.interval?.let { (day.startMs - it.startMs).coerceAtLeast(0) } ?: 0) {
                                     val next = selection?.interval?.let { RecordingTimeline.next(index.recordings, it, day) }
                                     if (next != null) choose(next.interval.startMs + next.positionMs)
                                     else {
@@ -156,9 +169,7 @@ fun ChannelDetailScreen(
                                 }
                             }
                         }
-                        Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text(playbackMessage ?: "录像回放", color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
-                        }
+
 
                     }
                 }
@@ -179,12 +190,33 @@ fun ChannelDetailScreen(
             }
             if (kind == "recordings") {
                 HorizontalDivider(color = RecorderLine)
-                Row(Modifier.fillMaxWidth().height(if (compactLandscape) 44.dp else 66.dp).padding(horizontal = 24.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                    ChoiceMenu("速度", listOf("0.5" to "0.5×", "1.0" to "1×", "2.0" to "2×"), speed.toString()) { speed = it.toFloat() }
-                    FilledIconButton(onClick = { playing = !playing }, modifier = Modifier.size(44.dp).testTag("channel-play-toggle"), shape = CircleShape,
-                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = RecorderInk, contentColor = RecorderBackground)) { Text(if (playing) "Ⅱ" else "▷") }
-                    TextButton(onClick = { archive = false; directUrl = null; scrubbing = false; playbackMessage = null; playing = true }, modifier = Modifier.testTag("channel-return-live")) { Text("返回实时", color = RecorderInk) }
+                Row(Modifier.fillMaxWidth().height(if (compactLandscape) 48.dp else 68.dp).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    FilledTonalButton(onClick = { showSpeed = true }, shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.width(96.dp).testTag("channel-speed")) {
+                        Text(if(speed == speed.toInt().toFloat()) "${speed.toInt()}×" else "${speed}×")
+                    }
+                    FilledIconButton(onClick = { playing = !playing }, modifier = Modifier.size(52.dp).testTag("channel-play-toggle"), shape = CircleShape,
+                        colors = IconButtonDefaults.filledIconButtonColors(containerColor = RecorderBlue, contentColor = MaterialTheme.colorScheme.onPrimary)) { Text(if (playing) "Ⅱ" else "▷") }
+                    FilledTonalButton(onClick = { archive = false; directUrl = null; scrubbing = false; playbackMessage = null; playing = true }, shape = RoundedCornerShape(10.dp), modifier = Modifier.width(96.dp).testTag("channel-return-live")) { Text("返回实时", color = RecorderBlue, style = MaterialTheme.typography.labelMedium) }
                 }
+            }
+        }
+    }
+    if (showSpeed) {
+        ModalBottomSheet(onDismissRequest = { showSpeed = false }, containerColor = RecorderBackground) {
+            Column(Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("播放速度", style = MaterialTheme.typography.titleMedium)
+                Text(String.format(java.util.Locale.ROOT, "%.1f×", speed), Modifier.padding(vertical = 16.dp),
+                    color = RecorderBlue, style = MaterialTheme.typography.headlineMedium)
+                // 滑动即时生效，范围与已有播放器能力保持一致。
+                Slider(value = speed, onValueChange = { speed = (it * 2).toInt().coerceIn(1, 4) / 2f },
+                    valueRange = .5f..2f, steps = 2,
+                    modifier = Modifier.fillMaxWidth().testTag("channel-speed-slider").semantics { contentDescription = "播放倍速" })
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    listOf("0.5×", "1×", "1.5×", "2×").forEach { Text(it, color = RecorderMuted, style = MaterialTheme.typography.labelMedium) }
+                }
+                Button(onClick = { showSpeed = false }, modifier = Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 12.dp)
+                    .testTag("channel-speed-done"), shape = RoundedCornerShape(12.dp)) { Text("完成") }
             }
         }
     }
@@ -193,11 +225,13 @@ fun ChannelDetailScreen(
 @Composable
 private fun ChannelHistoryTabs(kind: String, onChange: (String) -> Unit, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().height(48.dp).padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 40.dp, vertical = 8.dp).height(36.dp)
+            .background(MaterialTheme.colorScheme.surfaceContainerHigh, RoundedCornerShape(10.dp)).padding(2.dp), verticalAlignment = Alignment.CenterVertically) {
             listOf("recordings" to "回放", "events" to "事件").forEach { (value, label) ->
-                Column(Modifier.width(60.dp).fillMaxHeight().selectable(kind == value, onClick = { onChange(value) }).testTag("channel-tab-$value"), verticalArrangement = Arrangement.SpaceBetween) {
-                    Text(label, Modifier.padding(top = 14.dp), style = MaterialTheme.typography.titleMedium, color = if(kind == value) RecorderBlue else RecorderMuted)
-                    Box(Modifier.width(30.dp).height(2.dp).background(if(kind == value) RecorderBlue else Color.Transparent))
+                Surface(onClick = { onChange(value) }, modifier = Modifier.weight(1f).fillMaxHeight().testTag("channel-tab-$value"),
+                    shape = RoundedCornerShape(8.dp), color = if(kind == value) RecorderBlue else Color.Transparent,
+                    contentColor = if(kind == value) MaterialTheme.colorScheme.onPrimary else RecorderInk) {
+                    Box(contentAlignment = Alignment.Center) { Text(label, style = MaterialTheme.typography.bodyMedium) }
                 }
             }
         }
@@ -215,6 +249,10 @@ private fun ChannelPreview(api: RecorderApi, channelId: Int, channel: JSONObject
         Box {
             CameraFrame(api, channel, channelId, connected, active,
                 Modifier.fillMaxSize().testTag("channel-preview-$channelId"))
+            IconButton(onClick = onFullscreen, modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp)
+                .background(Color(0x99000000), RoundedCornerShape(6.dp)).size(36.dp).testTag("channel-fullscreen").semantics { contentDescription = "全屏" }) {
+                RecorderGlyph("expand", Modifier.size(20.dp), Color.White)
+            }
             // 只有此按钮进入全屏，轻触画面不会误切换导航。
             if (online && channel?.optBoolean("recording") == true) {
                 Surface(Modifier.align(Alignment.TopEnd).padding(10.dp), color = Color(0xA618181B), shape = RoundedCornerShape(7.dp)) {
@@ -228,17 +266,5 @@ private fun ChannelPreview(api: RecorderApi, channelId: Int, channel: JSONObject
 
         }
     }
-    }
-    Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 6.dp),
-        horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-        Text(when {
-            !connected -> "等待设备连接"
-            channel?.optBoolean("enabled", true) == false -> "通道已关闭"
-            !online -> "暂无信号"
-            else -> "预览 ${channel.metric("preview_fps", " fps")}"
-        }, color = RecorderMuted, style = MaterialTheme.typography.labelSmall)
-        IconButton(onClick = onFullscreen, modifier = Modifier.size(40.dp).testTag("channel-fullscreen").semantics { contentDescription = "全屏" }) {
-            RecorderGlyph("expand", Modifier.size(20.dp), RecorderInk)
-        }
     }
 }

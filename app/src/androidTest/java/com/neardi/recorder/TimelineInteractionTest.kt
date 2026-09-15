@@ -44,6 +44,24 @@ class TimelineInteractionTest {
     private val day = RecordingTimeline.day(LocalDate.of(2026, 9, 7), zone)
     private val empty = DayIndex(emptyList(), emptyList())
 
+    @Test fun denseEventsExpandAndCanSelectEverySnapshot() {
+        val base = day.startMs + 12*3_600_000L
+        val selected = mutableLongStateOf(base)
+        val moments = listOf(
+            com.neardi.recorder.ui.TimelineMoment("first", base, "person", null),
+            com.neardi.recorder.ui.TimelineMoment("second", base+1000, "animal", null))
+        compose.setContent {
+            RecorderTheme { Box(Modifier.fillMaxSize()) {
+                VerticalDayTimeline(DayIndex(emptyList(), emptyList(), moments, true), day, zone, true,
+                    selected.longValue, {}, { selected.longValue = it }, active = false)
+            } }
+        }
+        compose.onNodeWithTag("timeline-event-first").performClick()
+        compose.onNodeWithText("附近 2 条事件").assertIsDisplayed()
+        compose.onNodeWithText("12:00:01").performClick()
+        compose.onNodeWithTag("timeline-selected-time").assertTextEquals("12:00:01")
+        compose.runOnIdle { assertEquals(base+1000, selected.longValue) }
+    }
     @Test fun preciseAccessibleTimeIsNotRoundedToOverviewPixelsAfterZoomOrRestore() {
         val target = day.startMs + 8_000
         val fraction = day.fractionAt(target)

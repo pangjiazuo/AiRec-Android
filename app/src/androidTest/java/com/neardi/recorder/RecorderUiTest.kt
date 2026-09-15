@@ -86,6 +86,52 @@ class RecorderUiTest {
         extraServers.forEach { it.shutdown() }
     }
 
+    @Test fun timelineDesignAndEventNavigation() {
+        val date = java.time.LocalDate.now()
+        val zone = java.time.ZoneId.systemDefault()
+        val start = date.atStartOfDay(zone).toInstant().toEpochMilli()
+        val times = listOf(18*3600+32*60+10, 18*3600+38*60+2, 18*3600+46*60+25)
+        val types = listOf("person", "dwell", "vehicle")
+        fixture.timelineDesign = true
+        scrollToCamera(1)
+        compose.onNodeWithTag("camera-1").performClick()
+        compose.waitUntil(10_000) { compose.onNodeWithTag("channel-day-timeline").fetchSemanticsNode().config[SemanticsProperties.StateDescription] == "已加载" }
+        val window = com.neardi.recorder.ui.RecordingTimeline.day(date, zone)
+        compose.onNodeWithTag("channel-day-timeline").performSemanticsAction(SemanticsActions.SetProgress) {
+            assertTrue(it(window.fractionAt(start + times[1]*1000L)))
+        }
+        compose.onNodeWithTag("timeline-event-demo-dwell").performClick()
+        compose.waitUntil(10_000) { fixture.requests.any { it.contains("/media/timeline.mp4") } }
+        compose.onNodeWithTag("timeline-event-demo-dwell").performClick()
+        Thread.sleep(1800)
+        capture("timeline-design-portrait.png")
+        compose.onNodeWithTag("timeline-filter-vehicle").performClick()
+        compose.onNodeWithTag("timeline-event-demo-person").assertDoesNotExist()
+        compose.onNodeWithTag("timeline-filter-").performClick()
+        compose.onNodeWithTag("timeline-next-event").assertDoesNotExist()
+        compose.onNodeWithTag("timeline-previous-event").assertDoesNotExist()
+        compose.onNodeWithTag("channel-speed").performClick()
+        compose.onNodeWithTag("channel-speed-slider").performSemanticsAction(SemanticsActions.SetProgress) { assertTrue(it(2f)) }
+        capture("timeline-design-speed.png")
+        compose.onNodeWithTag("channel-speed-done").performClick()
+        compose.onNodeWithTag("channel-speed").assertTextContains("2×")
+        compose.onNodeWithTag("timeline-event-demo-vehicle").performClick()
+        compose.onNodeWithTag("timeline-selected-time").assertTextEquals("18:46:25")
+        compose.onNodeWithTag("timeline-event-demo-dwell").performClick()
+        compose.onNodeWithTag("timeline-selected-time").assertTextEquals("18:38:02")
+        compose.onNodeWithTag("timeline-precise").performClick()
+        compose.onNodeWithTag("timeline-selected-time").assertTextEquals("18:38:02")
+        capture("timeline-design-precise.png")
+        rotate()
+        compose.onNodeWithTag("channel-return-live").assertIsDisplayed()
+        Thread.sleep(1800) // 旋转后等待原生视频表面恢复再核对截图。
+        capture("timeline-design-landscape.png")
+        rotate()
+        compose.onNodeWithTag("timeline-overview").performClick()
+        compose.onNodeWithTag("channel-return-live").performClick()
+        compose.onNodeWithTag("channel-preview-1").assertIsDisplayed()
+        capture("timeline-design-live.png")
+    }
     @Test fun fiveChannelsKeepMissingInputsIndependentAndSupportFullscreen() {
         for (id in 1..5) {
             scrollToCamera(id)
@@ -683,7 +729,21 @@ private class BoardFixture(firstChannelName: String = "AHD1") : Dispatcher() {
     @Volatile var storageLost = false
     @Volatile var putResponseDelayMillis = 0L
     @Volatile var nextPutFailureGate: CountDownLatch? = null
+    @Volatile var timelineDesign = false
     @Volatile var recordingRows: JSONArray? = null
+    private fun timelineResponse(start: String, end: String): MockResponse {
+        val base = java.time.Instant.parse(start).toEpochMilli()
+        val rows = JSONArray(); val events = JSONArray(); val segments = JSONArray()
+        listOf("person" to (18*3600+32*60+10), "dwell" to (18*3600+38*60+2), "vehicle" to (18*3600+46*60+25)).forEach { (type, seconds) ->
+            val at = java.time.Instant.ofEpochMilli(base + seconds*1000L).toString()
+            rows.put(JSONObject().put("id", "record-$type").put("channel_id", 1).put("created_at", at)
+                .put("duration_seconds", 120).put("available", true).put("url", "/media/timeline.mp4"))
+            events.put(JSONObject().put("id", "demo-$type").put("channel_id", 1).put("created_at", at)
+                .put("event_type", type).put("snapshot_url", "/media/test-0.jpg"))
+            segments.put(JSONObject().put("start", at).put("end", java.time.Instant.ofEpochMilli(base + seconds*1000L+10000).toString()).put("event_type", type))
+        }
+        return json(JSONObject().put("start", start).put("end", end).put("recordings", rows).put("event_segments", segments).put("event_items", events))
+    }
     private val lock = Any()
     private var settings = config().apply { getJSONArray("channels").getJSONObject(0).put("name", firstChannelName) }
     private val jpeg: ByteArray = ByteArrayOutputStream().use { output ->
@@ -709,6 +769,12 @@ private class BoardFixture(firstChannelName: String = "AHD1") : Dispatcher() {
             }
         }
         return when (url.encodedPath) {
+            "/media/timeline.mp4" -> {
+                val bytes = InstrumentationRegistry.getInstrumentation().context.assets.open("timeline-fixture.mp4").use { it.readBytes() }
+                val range = request.getHeader("Range")?.removePrefix("bytes=")?.substringBefore('-')?.toIntOrNull() ?: 0
+                MockResponse().setResponseCode(if(range > 0) 206 else 200).setHeader("Content-Type", "video/mp4")
+                    .setHeader("Content-Range", "bytes $range-${bytes.size-1}/${bytes.size}").setBody(Buffer().write(bytes, range, bytes.size-range))
+            }
             "/api/status" -> json(status())
             "/api/config" -> synchronized(lock) {
                 if (request.method == "PUT") {
@@ -718,7 +784,7 @@ private class BoardFixture(firstChannelName: String = "AHD1") : Dispatcher() {
                         .setBodyDelay(putResponseDelayMillis, TimeUnit.MILLISECONDS)
                 } else json(settings)
             }
-            "/api/timeline" -> json(JSONObject().put("start", url.queryParameter("start")).put("end", url.queryParameter("end"))
+            "/api/timeline" -> if(timelineDesign) timelineResponse(url.queryParameter("start")!!, url.queryParameter("end")!!) else json(JSONObject().put("start", url.queryParameter("start")).put("end", url.queryParameter("end"))
                 .put("recordings", JSONArray()).put("event_segments", JSONArray()))
             "/api/recordings" -> json(JSONObject().put("items", recordingRows ?: JSONArray().put(JSONObject()
                 .put("id", "recording-${url.queryParameter("channel_id") ?: "1"}").put("channel_id", url.queryParameter("channel_id")?.toIntOrNull() ?: 1).put("created_at", "2026-09-07T10:00:00+00:00")
